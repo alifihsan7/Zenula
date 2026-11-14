@@ -250,7 +250,6 @@ constexpr unsigned warningColor = 0xffcf8a;   // memory or a disk over 80%
 // Opaque: even 2% translucency let windows underneath show through the island's text.
 constexpr float shellOpacity = 1.0f;
 constexpr float shellTintOpacity = 1.0f;
-constexpr unsigned readoutColor = 0xc2e0ff;
 constexpr float batteryCellWidth = 25;   // 20 DIP cell, its nub, and the gap before the percentage
 
 unsigned batteryColor(unsigned level) {
@@ -4162,7 +4161,7 @@ void Island::drawMedia(D2D1_RECT_F panel, Clock::time_point now, float artOpacit
         constexpr float lyricButtonWidth = 34;
         const auto lyricButton = box(right - lyricButtonWidth, middleY - mediaActionHeight / 2, lyricButtonWidth, mediaActionHeight);
         drawButton(lyricButton, L"", Hit::lyrics, record, 0, lyricsOpen_);
-        drawLyricsGlyph(pt(lyricButton.left + 9, lyricButton.top + 8), lyricsOpen_ ? rgb(readoutColor) : rgb(inkColor));
+        drawLyricsGlyph(pt(lyricButton.left + 9, lyricButton.top + 8), lyricsOpen_ ? accent_ : rgb(inkColor));
     }
 
     if (panel.right - panel.left > mediaPanelWidth) {
@@ -4260,7 +4259,7 @@ void Island::prepareLyricLayout(float width) {
     winrt::check_hresult(layout->GetMetrics(&metrics));
     if (!lyricRomajiInk_) {
         winrt::check_hresult(target_->CreateSolidColorBrush(rgb(0x6f747c), lyricRomajiInk_.put()));
-        winrt::check_hresult(target_->CreateSolidColorBrush(rgb(readoutColor), lyricRomajiActiveInk_.put()));
+        winrt::check_hresult(target_->CreateSolidColorBrush(accent_, lyricRomajiActiveInk_.put()));
         winrt::check_hresult(target_->CreateSolidColorBrush(mixColor(rgb(mutedColor), rgb(inkColor), 0.55f), lyricHoverInk_.put()));
     }
     for (const auto range : lyricRomajiRanges_) {
@@ -4383,6 +4382,7 @@ void Island::drawLyrics(D2D1_RECT_F panel, Clock::time_point now, double positio
             winrt::check_hresult(lyricLayout_->SetDrawingEffect(lyricHoverInk_.get(), lyricRanges_[hover]));
         lyricHoverShown_ = hover;
     }
+    if (lyricRomajiActiveInk_) lyricRomajiActiveInk_->SetColor(accent_);   // the active romaji follows the accent
     target_->PushAxisAlignedClip(lyricViewport_, D2D1_ANTIALIAS_MODE_ALIASED);
     if (hover >= 0) {
         if (const float level = hoverLevel(Hit::lyricLine, static_cast<size_t>(hover)); level > 0) {
