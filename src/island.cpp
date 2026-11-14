@@ -3072,41 +3072,46 @@ void Island::fillShell(ID2D1Geometry* shape) {
     target_->FillGeometry(shape, gradient.get());
 }
 
-// The Zenula owl, drawn from the 32 px icon geometry (assets/logos/zenula.svg uses the same 256 grid).
+// The Zenula icon (assets/logos/zenula.svg): the black owl on its white tile, `height` tall, from `origin`.
 void Island::drawLogo(D2D1_POINT_2F origin, float height) {
-    constexpr float gridLeft = 58, gridTop = 32, gridHeight = 196;   // ear tips to feet, after the 8 unit lift
-    const float scale = height / gridHeight;
+    constexpr float gridLeft = 16, gridTop = 16, gridSize = 224;   // the tile inside the 256 grid
+    const float scale = height / gridSize;
     D2D1_MATRIX_3X2_F previous{};
     target_->GetTransform(&previous);
     target_->SetTransform(D2D1::Matrix3x2F::Translation(-gridLeft, -gridTop) *
                           D2D1::Matrix3x2F::Scale(scale, scale) *
                           D2D1::Matrix3x2F::Translation(origin.x, origin.y) * previous);
-    const auto body = rgb(0x91caff);
-    const auto dark = rgb(0x0c1422);
-    // Shapes sit 8 units higher than the grid, like the icon's translate(0 -8).
-    const auto at = [](float x, float y) { return pt(x, y - 8); };
-    target_->FillRoundedRectangle(rounded(D2D1::RectF(92, 204, 122, 228), 12), ink(body));
-    target_->FillRoundedRectangle(rounded(D2D1::RectF(134, 204, 164, 228), 12), ink(body));
-    target_->FillRoundedRectangle(rounded(D2D1::RectF(58, 64, 198, 220), 58), ink(body));
-    winrt::com_ptr<ID2D1PathGeometry> ears;
-    winrt::check_hresult(graphics_->CreatePathGeometry(ears.put()));
-    winrt::com_ptr<ID2D1GeometrySink> sink;
-    winrt::check_hresult(ears->Open(sink.put()));
-    for (const float side : {1.0f, -1.0f}) {
-        const auto x = [side](float value) { return 128 + side * (value - 128); };
-        sink->BeginFigure(at(x(66), 116), D2D1_FIGURE_BEGIN_FILLED);
-        sink->AddLine(at(x(70), 48));
-        sink->AddLine(at(x(112), 84));
-        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    const auto black = rgb(0x05070a);
+    const auto navy = rgb(0x0c1422);
+    const auto blue = rgb(0x91caff);
+    target_->FillRoundedRectangle(rounded(D2D1::RectF(16, 16, 240, 240), 56), ink(rgb(0xeef2f7)));
+    for (const auto [x, y] : {std::pair{100.0f, 206.0f}, {113.0f, 209.0f}, {143.0f, 209.0f}, {156.0f, 206.0f}})
+        target_->FillEllipse(D2D1::Ellipse(pt(x, y), 8, 8), ink(black));
+    PathBuilder ears(graphics_.get());
+    ears.move(pt(46, 126)).line(pt(50, 52)).line(pt(108, 94)).close();
+    ears.move(pt(210, 126)).line(pt(206, 52)).line(pt(148, 94)).close();
+    const auto earGeometry = ears.finish();
+    target_->FillGeometry(earGeometry.get(), ink(black));
+    target_->DrawGeometry(earGeometry.get(), ink(black), 12, roundStroke_.get());
+    const auto head = rounded(D2D1::RectF(30, 78, 226, 198), 60);
+    target_->FillRoundedRectangle(head, ink(black));
+    winrt::com_ptr<ID2D1RoundedRectangleGeometry> face;   // the glow is clipped to the head
+    winrt::check_hresult(graphics_->CreateRoundedRectangleGeometry(rounded(D2D1::RectF(36, 84, 220, 192), 54), face.put()));
+    pushLayer(face.get(), 1);
+    target_->FillEllipse(D2D1::Ellipse(pt(128, 196), 80, 22), ink(withAlpha(blue, 0.3f)));
+    popLayer();
+    for (const float x : {98.0f, 158.0f}) target_->FillEllipse(D2D1::Ellipse(pt(x, 138), 34, 34), ink(withAlpha(blue, 0.14f)));
+    PathBuilder brow(graphics_.get());
+    brow.move(pt(62, 104), false).curve(pt(90, 108), pt(112, 117.3f), pt(128, 132))
+        .curve(pt(144, 117.3f), pt(166, 108), pt(194, 104));
+    target_->DrawGeometry(brow.finish().get(), ink(withAlpha(blue, 0.8f)), 7, roundStroke_.get());
+    for (const float x : {98.0f, 158.0f}) {
+        target_->FillEllipse(D2D1::Ellipse(pt(x, 138), 27, 27), ink(navy));
+        target_->FillEllipse(D2D1::Ellipse(pt(x, 138), 21, 21), ink(rgb(0xffffff)));
+        target_->FillEllipse(D2D1::Ellipse(pt(x, 138), 11, 11), ink(navy));
+        target_->FillEllipse(D2D1::Ellipse(pt(x + 6, 132), 4.5f, 4.5f), ink(rgb(0xffffff)));
     }
-    winrt::check_hresult(sink->Close());
-    target_->FillGeometry(ears.get(), ink(body));
-    target_->DrawGeometry(ears.get(), ink(body), 16, roundStroke_.get());
-    for (const float x : {104.0f, 152.0f}) {
-        target_->FillEllipse(D2D1::Ellipse(at(x, 130), 21, 21), ink(dark));
-        target_->FillEllipse(D2D1::Ellipse(at(x + 7, 123), 7, 7), ink(rgb(0xffffff)));
-    }
-    fillPolygon({at(121, 152), at(135, 152), at(128, 166)}, dark);
+    fillPolygon({pt(118, 158), pt(138, 158), pt(128, 174)}, rgb(0xffcf8a));
     target_->SetTransform(previous);
 }
 
@@ -3353,16 +3358,16 @@ void Island::drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool 
     const bool sleeping = focusQuiet() || alertsQuiet();
     if (glow) {
         // A soft accent glow along the bottom edge; dimmer while asleep.
-        const D2D1_GRADIENT_STOP stops[]{{0, withAlpha(accent_, (sleeping ? 0.22f : 0.55f) * opacity)}, {1, withAlpha(accent_, 0)}};
+        const D2D1_GRADIENT_STOP stops[]{{0, withAlpha(accent_, (sleeping ? 0.12f : 0.3f) * opacity)}, {1, withAlpha(accent_, 0)}};
         winrt::com_ptr<ID2D1GradientStopCollection> collection;
         winrt::check_hresult(target_->CreateGradientStopCollection(stops, 2, collection.put()));
         winrt::com_ptr<ID2D1RadialGradientBrush> brush;
         winrt::check_hresult(target_->CreateRadialGradientBrush(
-            D2D1::RadialGradientBrushProperties(at(0, 17), {}, 40 * scale, 12 * scale), collection.get(), brush.put()));
-        target_->FillEllipse(D2D1::Ellipse(at(0, 17), 40 * scale, 12 * scale), brush.get());
+            D2D1::RadialGradientBrushProperties(at(0, 17), {}, 30 * scale, 8 * scale), collection.get(), brush.put()));
+        target_->FillEllipse(D2D1::Ellipse(at(0, 17), 30 * scale, 8 * scale), brush.get());
     }
     for (const float side : {-1.0f, 1.0f})
-        target_->FillEllipse(D2D1::Ellipse(at(11 * side, -2), 11 * scale, 11 * scale), ink(withAlpha(accent_, 0.16f * opacity)));
+        target_->FillEllipse(D2D1::Ellipse(at(11 * side, -2), 11 * scale, 11 * scale), ink(withAlpha(accent_, 0.1f * opacity)));
     PathBuilder brow(graphics_.get());
     brow.move(at(-22, -12), false);
     quad(brow, at(-22, -12), at(-8, -10), at(0, -4));
@@ -3726,6 +3731,8 @@ void Island::drawIsland(Clock::time_point now, float value, float amount, bool m
     const auto owlCenter = pt((from.left + from.right) / 2, (from.top + from.bottom) / 2);
     if (owl > 0) drawOwlEars(owlCenter, owlScale, owl);
     fillShell(shell);
+    // The owl is flat black, not the shell's tinted gradient.
+    if (owl > 0) target_->FillRoundedRectangle(shell, ink(D2D1::ColorF(0, 0, 0, owl)));
     const float hover = dotHover(now) * (1 - clamp01(amount)) * (1 - clamp01(value));
     if (hover > 0) target_->FillRoundedRectangle(shell, ink(white((owl > 0 ? 0.06f : 0.18f) * hover)));
     const float compactOpacity = lin(0.55f, 1, amount) * (1 - lin(0, 0.38f, value));
