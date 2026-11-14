@@ -291,6 +291,10 @@ private:
     void prepareText();
     void releaseDeviceResources();
     void drawCompactContent(Clock::time_point now, D2D1_RECT_F shape, bool hideTitle, bool hideArt = false);
+    float idleWidth() const;
+    float idleHeight() const;
+    void drawOwlEars(D2D1_POINT_2F center, float scale, float opacity);
+    void drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool glow, Clock::time_point now);
     void drawLyricsGlyph(D2D1_POINT_2F origin, D2D1_COLOR_F color);
     void drawLogo(D2D1_POINT_2F origin, float height);
     void drawSpectrumBars(D2D1_POINT_2F center, float spacing, float barWidth, float maxHeight, D2D1_COLOR_F color);
@@ -674,6 +678,8 @@ private:
     std::optional<Clock::time_point> closeAt_;
     Hit hovered_ = Hit::none;
     Clock::time_point dotHoverStart_{};
+    Clock::time_point owlBlinkStart_{};
+    D2D1_POINT_2F owlLook_{};   // where the owl's pupils point, while the pointer is over it
     float dotHoverFrom_ = 0;
     bool dotHot_ = false;
     bool privacyDetailsOpen_ = false;

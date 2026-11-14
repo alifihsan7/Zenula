@@ -31,6 +31,11 @@ constexpr float pillLyricTravel = 4;
 constexpr float pillCenterY = pillTop + pillHeight / 2;
 constexpr float pillLeft = -pillWidth / 2;
 constexpr float dotSize = 12;
+// The owl idle look: a capsule with ear tufts and a face, drawn on a 30 unit tall grid (see experiments/zenula-owl-preview.html).
+constexpr float owlHeight = 26;
+constexpr float owlWidth = owlHeight * 76 / 30;
+constexpr float owlScale = owlHeight / 30;
+constexpr auto owlBlinkTime = 140ms;
 constexpr float activityDotSize = pausedPillHeight;
 constexpr float privacyIconPitch = 18;
 constexpr float privacyBadgeHeight = 25;
@@ -1313,9 +1318,9 @@ std::array<float, 3> Island::captureAmounts(Clock::time_point now) const {
 D2D1_RECT_F Island::compactShape(Clock::time_point now, float amount) const {
     const float t = clamp01(amount);
     const auto size = pillSize(now);
-    const float width = std::lerp(dotSize, size.width + privacyBadgeWidth(now), t);
-    const float height = std::lerp(dotSize, size.height, t);
-    auto shape = box(-width / 2, std::lerp(pillCenterY - dotSize / 2, pillTop, t), width, height);
+    const float width = std::lerp(idleWidth(), size.width + privacyBadgeWidth(now), t);
+    const float height = std::lerp(idleHeight(), size.height, t);
+    auto shape = box(-width / 2, std::lerp(pillCenterY - idleHeight() / 2, pillTop, t), width, height);
     if (animate_ && countdownCompletion_.mode == pillMode_ && !open_ && t >= 1)
         shape = countdownShake(shape, progress(countdownCompletion_.start, countdownCompletionMotion, now));
     return shape;
@@ -1427,7 +1432,7 @@ bool Island::moving(Clock::time_point now) const {
            now - taskMotionStart_ < taskMotionTime || now - timerSlide_.start < segmentSlideTime ||
            now - scratchSlide_.start < segmentSlideTime || now - scratchModeStart_ < scratchFadeTime ||
            now - prayerSlide_.start < segmentSlideTime ||
-           now - taskProgress_.start < moveMotion ||
+           now - taskProgress_.start < moveMotion || now - owlBlinkStart_ < owlBlinkTime ||
            now - sourceMenuMotion_.start < menuRevealTime || now - audioMenuMotion_.start < menuRevealTime ||
            now - appMotion_.start < rowMotionTime || now - bluetoothMotion_.start < rowMotionTime ||
            now - brightnessStart_ < brightnessTime || now - prayerModeStart_ < scratchFadeTime || now - pillStart_ < shapeTime || now - panelStart_ < shapeTime || now - navStart_ < navRevealTime || now - navSelectionStart_ < navSelectionTime ||
@@ -2305,7 +2310,15 @@ bool Island::pointerMove(POINT client) {
         }
     }
     const bool navChanged = setNavExpanded(open_ && inside(navHoverRect_, point), now);
-    if (hit == hovered_ && index == hoveredIndex_) return navChanged || openAt_.has_value();
+    bool looked = false;
+    if (!open_ && preferences_.idleOwl && pillMode_ == PillMode::dot && hit == Hit::pill) {
+        // The owl's pupils follow the pointer while it is over the owl.
+        const D2D1_POINT_2F look{std::clamp(point.x / (owlWidth / 2), -1.0f, 1.0f) * 1.8f,
+                                 std::clamp((point.y - pillCenterY) / (owlHeight / 2), -1.0f, 1.0f) * 1.2f};
+        looked = std::abs(look.x - owlLook_.x) > 0.15f || std::abs(look.y - owlLook_.y) > 0.15f;
+        if (looked) owlLook_ = look;
+    }
+    if (hit == hovered_ && index == hoveredIndex_) return navChanged || openAt_.has_value() || looked;
     setDotHover(hit == Hit::activityDot || (hit == Hit::pill && pillMode_ == PillMode::dot), now);
     setHovered(hit, index, now);
     return true;
@@ -2749,8 +2762,13 @@ bool Island::overControl() const {
     return hovered_ != Hit::none;
 }
 
+float Island::idleWidth() const { return preferences_.idleOwl ? owlWidth : dotSize; }
+float Island::idleHeight() const { return preferences_.idleOwl ? owlHeight : dotSize; }
+
 void Island::setDotHover(bool hot, Clock::time_point now) {
     if (hot == dotHot_) return;
+    if (hot && preferences_.idleOwl && animate_) owlBlinkStart_ = now;   // one blink as the pointer arrives
+    if (!hot) owlLook_ = {};
     dotHoverFrom_ = dotHover(now);
     dotHot_ = hot;
     dotHoverStart_ = now;
@@ -3216,7 +3234,15 @@ void Island::drawCompactContent(Clock::time_point now, D2D1_RECT_F shape, bool h
         mediaOpacity = (previousPillLyric_.layout ? 0 : oldOpacity) + (pillLyric_.layout ? 0 : newOpacity);
     }
     if (mediaOpacity > 0) {
-        if (pillContent_ == PillMode::media && !hideArt) drawArt(pillArtRect(shape), mediaOpacity);
+        if (pillContent_ == PillMode::media && !hideArt) {
+            const auto art = pillArtRect(shape);
+            if (preferences_.idleOwl) {
+                const float size = art.right - art.left;
+                drawOwlFace(pt((art.left + art.right) / 2, (art.top + art.bottom) / 2 - size * 0.05f), size / 26, mediaOpacity, false, now);
+            } else {
+                drawArt(art, mediaOpacity);
+            }
+        }
         target_->SetTransform(D2D1::Matrix3x2F::Translation(center.x, center.y - pillCenterY) * base_);
         if (mediaOpacity < 1) pushLayer(nullptr, mediaOpacity);
         drawPillContent(now, shape.right - shape.left, hideTitle);
@@ -3303,6 +3329,70 @@ void Island::drawCompanionShell(D2D1_RECT_F shape, float pinch) {
     winrt::com_ptr<ID2D1TransformedGeometry> geometry;
     winrt::check_hresult(graphics_->CreateTransformedGeometry(path.finish().get(), &transform, geometry.put()));
     fillShell(geometry.get());
+}
+
+// The owl, centered on `center`, in units of the 30 tall grid scaled by `scale`.
+void Island::drawOwlEars(D2D1_POINT_2F center, float scale, float opacity) {
+    const auto at = [&](float x, float y) { return pt(center.x + x * scale, center.y + y * scale); };
+    const auto color = D2D1::ColorF(0, 0, 0, opacity);
+    for (const float side : {-1.0f, 1.0f}) {
+        PathBuilder ear(graphics_.get());
+        ear.move(at(32 * side, -7)).line(at(31 * side, -24)).line(at(15 * side, -14)).close();
+        const auto geometry = ear.finish();
+        target_->FillGeometry(geometry.get(), ink(color));
+        target_->DrawGeometry(geometry.get(), ink(color), 3 * scale, roundStroke_.get());
+    }
+}
+
+void Island::drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool glow, Clock::time_point now) {
+    const auto at = [&](float x, float y) { return pt(center.x + x * scale, center.y + y * scale); };
+    const auto quad = [&](PathBuilder& path, D2D1_POINT_2F from, D2D1_POINT_2F control, D2D1_POINT_2F to) {
+        path.curve(pt(from.x + 2.0f / 3 * (control.x - from.x), from.y + 2.0f / 3 * (control.y - from.y)),
+                   pt(to.x + 2.0f / 3 * (control.x - to.x), to.y + 2.0f / 3 * (control.y - to.y)), to);
+    };
+    const bool sleeping = focusQuiet() || alertsQuiet();
+    if (glow) {
+        // A soft accent glow along the bottom edge; dimmer while asleep.
+        const D2D1_GRADIENT_STOP stops[]{{0, withAlpha(accent_, (sleeping ? 0.22f : 0.55f) * opacity)}, {1, withAlpha(accent_, 0)}};
+        winrt::com_ptr<ID2D1GradientStopCollection> collection;
+        winrt::check_hresult(target_->CreateGradientStopCollection(stops, 2, collection.put()));
+        winrt::com_ptr<ID2D1RadialGradientBrush> brush;
+        winrt::check_hresult(target_->CreateRadialGradientBrush(
+            D2D1::RadialGradientBrushProperties(at(0, 17), {}, 40 * scale, 12 * scale), collection.get(), brush.put()));
+        target_->FillEllipse(D2D1::Ellipse(at(0, 17), 40 * scale, 12 * scale), brush.get());
+    }
+    for (const float side : {-1.0f, 1.0f})
+        target_->FillEllipse(D2D1::Ellipse(at(11 * side, -2), 11 * scale, 11 * scale), ink(withAlpha(accent_, 0.16f * opacity)));
+    PathBuilder brow(graphics_.get());
+    brow.move(at(-22, -12), false);
+    quad(brow, at(-22, -12), at(-8, -10), at(0, -4));
+    quad(brow, at(0, -4), at(8, -10), at(22, -12));
+    target_->DrawGeometry(brow.finish().get(), ink(withAlpha(accent_, 0.55f * opacity)), 2 * scale, roundStroke_.get());
+
+    const auto lid = rgb(0xe8eef6, opacity);
+    const auto navy = rgb(0x0c1422, opacity);
+    if (sleeping) {
+        PathBuilder shut(graphics_.get());
+        for (const float side : {-1.0f, 1.0f}) {
+            shut.move(at(11 * side - 6, -1), false);
+            quad(shut, at(11 * side - 6, -1), at(11 * side, 2), at(11 * side + 6, -1));
+        }
+        target_->DrawGeometry(shut.finish().get(), ink(lid), 2 * scale, roundStroke_.get());
+    } else {
+        const float blinkT = animate_ ? progress(owlBlinkStart_, owlBlinkTime, now) : 1.0f;
+        const float open = blinkT < 1 ? 1 - 0.9f * std::sin(pi * blinkT) : 1.0f;
+        for (const float side : {-1.0f, 1.0f}) {
+            const auto eye = at(11 * side, -2);
+            target_->FillEllipse(D2D1::Ellipse(eye, 6.8f * scale, 6.8f * scale * open), ink(white(opacity)));
+            target_->DrawEllipse(D2D1::Ellipse(eye, 6.8f * scale, 6.8f * scale * open), ink(navy), 2 * scale);
+            const auto pupil = pt(eye.x + owlLook_.x * scale, eye.y + owlLook_.y * scale);
+            target_->FillEllipse(D2D1::Ellipse(pupil, 3.2f * scale, 3.2f * scale * open), ink(navy));
+            if (open > 0.6f)
+                target_->FillEllipse(D2D1::Ellipse(pt(pupil.x + 1.6f * scale, pupil.y - 1.6f * scale), 1.1f * scale, 1.1f * scale),
+                                     ink(white(opacity)));
+        }
+    }
+    fillPolygon({at(-3, 3), at(3, 3), at(0, 8)}, rgb(0xffcf8a, opacity));
 }
 
 void Island::drawLyricsGlyph(D2D1_POINT_2F origin, D2D1_COLOR_F color) {
@@ -3632,20 +3722,24 @@ void Island::drawIsland(Clock::time_point now, float value, float amount, bool m
         addTarget(hit, Hit::pill);
     }
     const auto shell = rounded(clip, radius);
+    const float owl = preferences_.idleOwl && !pendingHandoff ? (1 - lin(0, 0.35f, amount)) * (1 - lin(0, 0.3f, value)) : 0.0f;
+    const auto owlCenter = pt((from.left + from.right) / 2, (from.top + from.bottom) / 2);
+    if (owl > 0) drawOwlEars(owlCenter, owlScale, owl);
     fillShell(shell);
     const float hover = dotHover(now) * (1 - clamp01(amount)) * (1 - clamp01(value));
-    if (hover > 0) target_->FillRoundedRectangle(shell, ink(white(0.18f * hover)));
+    if (hover > 0) target_->FillRoundedRectangle(shell, ink(white((owl > 0 ? 0.06f : 0.18f) * hover)));
     const float compactOpacity = lin(0.55f, 1, amount) * (1 - lin(0, 0.38f, value));
     const float panelOpacity = lin(0.16f, 0.86f, value);
     const float switching = progress(screenStart_, screenFadeTime, now);
     const bool sharedArt = !pendingHandoff && screen_ == Screen::media && media_.hasSession && pillMode_ == PillMode::media &&
                            !pillLyric_.layout && !previousPillLyric_.layout &&
                            (switching >= 1 || screenFrom_ == screen_) && amount >= 1 && value > 0 && value < 1;
-    if (compactOpacity <= 0 && panelOpacity <= 0 && !morphTitle && !sharedArt) return;
+    if (compactOpacity <= 0 && panelOpacity <= 0 && !morphTitle && !sharedArt && owl <= 0) return;
 
     winrt::com_ptr<ID2D1RoundedRectangleGeometry> mask;
     winrt::check_hresult(graphics_->CreateRoundedRectangleGeometry(rounded(clip, radius), mask.put()));
     pushLayer(mask.get(), 1);
+    if (owl > 0) drawOwlFace(owlCenter, owlScale, owl, true, now);
     if (compactOpacity > 0) {
         if (compactOpacity < 1) pushLayer(nullptr, compactOpacity);
         if (pendingHandoff) drawHandoffOutgoing(from, 1);
@@ -5771,7 +5865,7 @@ float Island::measure(std::wstring_view value, IDWriteTextFormat* format) {
 }
 
 D2D1_RECT_F Island::closingDotShape(Clock::time_point now, D2D1_RECT_F pill) const {
-    if (closingDot_->idle) return box(-dotSize / 2, pillCenterY - dotSize / 2, dotSize, dotSize);
+    if (closingDot_->idle) return box(-idleWidth() / 2, pillCenterY - idleHeight() / 2, idleWidth(), idleHeight());
     const float top = (pill.top + pill.bottom - activityDotSize) / 2;
     return box(pill.right + activityDotGap, top, activityWidth(closingDot_->mode, now), activityDotSize);
 }
@@ -5857,8 +5951,8 @@ void Island::drawSplit(Clock::time_point now, float amount, std::optional<D2D1_R
         copyOpacity = lin(0.8f, 1, p);
     } else {
         // From the idle dot the bubble grows out of the dot itself.
-        const float width = std::lerp(dotSize, target, p);
-        const float height = std::lerp(dotSize, activityDotSize, p);
+        const float width = std::lerp(idleWidth(), target, p);
+        const float height = std::lerp(idleHeight(), activityDotSize, p);
         area = box(-width / 2, pillCenterY - height / 2, width, height);
         capsule(shape, area);
         const float t = lin(0.31f, 0.82f, p);
@@ -6115,6 +6209,7 @@ void Island::draw(HWND window) {
     // The surface only covers what is drawn this frame.
     const auto compact = compactShape(now, amount);
     auto bounds = unite(grow(compact, 2, 2), compactHit(compact, amount, compactForControls));
+    if (preferences_.idleOwl && amount < 1) bounds.top = std::min(bounds.top, pillCenterY - 26 * owlScale - 3);
     if (panelVisible) bounds = unite(bounds, grow(panelRect(now), 2, 2));
     const bool splitVisible = !panelVisible && bubbleShowing();
     const float splitAmount = alertFromOccludedDot_ ? 0 : amount;

@@ -141,13 +141,14 @@ constexpr wchar_t const* featureNames[]{L"Now Playing", L"Timers", L"Scratchpad"
 constexpr wchar_t const* widthChoices[]{L"Fit to title", L"147 px minimum"};
 constexpr wchar_t const* sizeChoices[]{L"Compact", L"Default", L"Large"};
 constexpr wchar_t const* accentChoices[]{L"Album artwork", L"Zenula blue", L"Custom", L"Per feature"};
+constexpr wchar_t const* idleChoices[]{L"Dot", L"Owl"};
 constexpr wchar_t const* pauseChoices[]{L"Now", L"3 s", L"5 s", L"Keep title"};
 constexpr wchar_t const* rhythmChoices[]{L"Pomodoro", L"Deep work", L"Long focus", L"Custom"};
 constexpr wchar_t const* quietChoices[]{L"Off", L"Follow Windows", L"On"};
 constexpr wchar_t const* earlyChoices[]{L"On time", L"5 min", L"10 min", L"15 min"};
 constexpr unsigned earlyMinutes[]{0, 5, 10, 15};
 constexpr int choiceControls[]{IDC_PILL_WIDTH, IDC_ISLAND_SIZE, IDC_ACCENT_MODE, IDC_PAUSE_DELAY,
-    IDC_FOCUS_RHYTHM, IDC_QUIET_MODE, IDC_PRAYER_EARLY};
+    IDC_FOCUS_RHYTHM, IDC_QUIET_MODE, IDC_PRAYER_EARLY, IDC_IDLE_LOOK};
 constexpr int choicesPerRow = 4;
 
 size_t choiceRow(int control) {
@@ -169,6 +170,7 @@ std::span<wchar_t const* const> choices(int id) {
     case IDC_PILL_WIDTH: return widthChoices;
     case IDC_ISLAND_SIZE: return sizeChoices;
     case IDC_ACCENT_MODE: return accentChoices;
+    case IDC_IDLE_LOOK: return idleChoices;
     case IDC_PAUSE_DELAY: return pauseChoices;
     case IDC_FOCUS_RHYTHM: return rhythmChoices;
     default: return {};
@@ -776,6 +778,7 @@ unsigned SettingsWindow::currentChoice(int id) const {
     case IDC_PILL_WIDTH: return settings_.fixedPillMinimum;
     case IDC_ISLAND_SIZE: return settings_.islandSize;
     case IDC_ACCENT_MODE: return settings_.accentMode;
+    case IDC_IDLE_LOOK: return settings_.idleOwl ? 1u : 0u;
     case IDC_PAUSE_DELAY: return settings_.compactPause;
     case IDC_FOCUS_RHYTHM: return settings_.rhythm;
     default: return 0;
@@ -909,6 +912,7 @@ void SettingsWindow::content(Builder& b, View view) const {
         b.open();
         b.row({.title = L"Size"}, {choice(IDC_ISLAND_SIZE)});
         b.row({.title = L"Pill width", .detail = L"Short titles keep a steady pill."}, {choice(IDC_PILL_WIDTH)});
+        b.row({.title = L"Idle look", .detail = L"What the island shows when nothing is running."}, {choice(IDC_IDLE_LOOK)});
         b.close();
         b.label(L"Color");
         b.open();
@@ -1124,6 +1128,7 @@ bool SettingsWindow::commandChoice(int id) {
     case IDC_PILL_WIDTH: updated.fixedPillMinimum = index != 0; break;
     case IDC_ISLAND_SIZE: updated.islandSize = index; break;
     case IDC_ACCENT_MODE: updated.accentMode = index; break;
+    case IDC_IDLE_LOOK: updated.idleOwl = index == 1; break;
     case IDC_PAUSE_DELAY: updated.compactPause = index; break;
     case IDC_FOCUS_RHYTHM: updated.rhythm = index; break;
     }
