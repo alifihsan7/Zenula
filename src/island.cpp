@@ -36,6 +36,15 @@ constexpr float owlHeight = 26;
 constexpr float owlWidth = owlHeight * 76 / 30;
 constexpr float owlScale = owlHeight / 30;
 constexpr auto owlBlinkTime = 140ms;
+constexpr auto owlHappyTime = 1600ms;
+constexpr auto owlHopTime = 520ms;
+
+// A small hop and a smaller rebound, in grid units (negative is up).
+float owlHop(float t) {
+    if (t <= 0 || t >= 1) return 0;
+    constexpr float half = 3.14159265f;
+    return t < 0.6f ? -7 * std::sin(half * t / 0.6f) : -2 * std::sin(half * (t - 0.6f) / 0.4f);
+}
 constexpr float activityDotSize = pausedPillHeight;
 constexpr float privacyIconPitch = 18;
 constexpr float privacyBadgeHeight = 25;
@@ -1433,6 +1442,7 @@ bool Island::moving(Clock::time_point now) const {
            now - scratchSlide_.start < segmentSlideTime || now - scratchModeStart_ < scratchFadeTime ||
            now - prayerSlide_.start < segmentSlideTime ||
            now - taskProgress_.start < moveMotion || now - owlBlinkStart_ < owlBlinkTime ||
+           (now >= owlHappyStart_ && now - owlHappyStart_ < owlHappyTime) ||
            now - sourceMenuMotion_.start < menuRevealTime || now - audioMenuMotion_.start < menuRevealTime ||
            now - appMotion_.start < rowMotionTime || now - bluetoothMotion_.start < rowMotionTime ||
            now - brightnessStart_ < brightnessTime || now - prayerModeStart_ < scratchFadeTime || now - pillStart_ < shapeTime || now - panelStart_ < shapeTime || now - navStart_ < navRevealTime || now - navSelectionStart_ < navSelectionTime ||
@@ -2028,10 +2038,12 @@ void Island::setFocusToday(unsigned minutes, unsigned rounds) {
 
 void Island::completeCountdown(Clock::time_point now, PillMode mode, IslandAlert alert) {
     countdownFinished_ = true;
+    if (animate_) owlHappyStart_ = now;
     resizeTimers(now);
     if (!suppressed_ && !open_ && !dotOnly_ && pillMode_ == mode && alertAllowed(alert.kind)) {
         const auto reveal = animate_ ? countdownCompletionMotion : 0ms;
         countdownCompletion_ = {now, now + reveal + alertHoldTime(alert), mode, std::move(alert.title)};
+        owlHappyStart_ = countdownCompletion_.until;
         return;
     }
     if (alert.fromCompanion) {
@@ -3241,12 +3253,7 @@ void Island::drawCompactContent(Clock::time_point now, D2D1_RECT_F shape, bool h
     if (mediaOpacity > 0) {
         if (pillContent_ == PillMode::media && !hideArt) {
             const auto art = pillArtRect(shape);
-            if (preferences_.idleOwl) {
-                const float size = art.right - art.left;
-                drawOwlFace(pt((art.left + art.right) / 2, (art.top + art.bottom) / 2 - size * 0.05f), size / 26, mediaOpacity, false, now);
-            } else {
-                drawArt(art, mediaOpacity);
-            }
+            drawArt(art, mediaOpacity);
         }
         target_->SetTransform(D2D1::Matrix3x2F::Translation(center.x, center.y - pillCenterY) * base_);
         if (mediaOpacity < 1) pushLayer(nullptr, mediaOpacity);
@@ -3356,6 +3363,9 @@ void Island::drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool 
                    pt(to.x + 2.0f / 3 * (control.x - to.x), to.y + 2.0f / 3 * (control.y - to.y)), to);
     };
     const bool sleeping = focusQuiet() || alertsQuiet();
+    const bool happy = animate_ && now >= owlHappyStart_ && now - owlHappyStart_ < owlHappyTime;
+    D2D1_POINT_2F look = owlLook_;
+    if (bubbleShowing()) look.x += 1.8f;
     if (glow) {
         // A soft accent glow along the bottom edge; dimmer while asleep.
         const D2D1_GRADIENT_STOP stops[]{{0, withAlpha(accent_, (sleeping ? 0.12f : 0.3f) * opacity)}, {1, withAlpha(accent_, 0)}};
@@ -3376,7 +3386,14 @@ void Island::drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool 
 
     const auto lid = rgb(0xe8eef6, opacity);
     const auto navy = rgb(0x0c1422, opacity);
-    if (sleeping) {
+    if (happy && !sleeping) {
+        PathBuilder smile(graphics_.get());
+        for (const float side : {-1.0f, 1.0f}) {
+            smile.move(at(11 * side - 6, 0), false);
+            quad(smile, at(11 * side - 6, 0), at(11 * side, -6), at(11 * side + 6, 0));
+        }
+        target_->DrawGeometry(smile.finish().get(), ink(lid), 2.2f * scale, roundStroke_.get());
+    } else if (sleeping) {
         PathBuilder shut(graphics_.get());
         for (const float side : {-1.0f, 1.0f}) {
             shut.move(at(11 * side - 6, -1), false);
@@ -3390,7 +3407,7 @@ void Island::drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool 
             const auto eye = at(11 * side, -2);
             target_->FillEllipse(D2D1::Ellipse(eye, 6.8f * scale, 6.8f * scale * open), ink(white(opacity)));
             target_->DrawEllipse(D2D1::Ellipse(eye, 6.8f * scale, 6.8f * scale * open), ink(navy), 2 * scale);
-            const auto pupil = pt(eye.x + owlLook_.x * scale, eye.y + owlLook_.y * scale);
+            const auto pupil = pt(eye.x + look.x * scale, eye.y + look.y * scale);
             target_->FillEllipse(D2D1::Ellipse(pupil, 3.2f * scale, 3.2f * scale * open), ink(navy));
             if (open > 0.6f)
                 target_->FillEllipse(D2D1::Ellipse(pt(pupil.x + 1.6f * scale, pupil.y - 1.6f * scale), 1.1f * scale, 1.1f * scale),
@@ -3709,7 +3726,12 @@ void Island::drawHandoffOutgoing(D2D1_RECT_F pill, float opacity) {
 void Island::drawIsland(Clock::time_point now, float value, float amount, bool morphTitle) {
     const auto full = panelRect(now);
     const bool pendingHandoff = !dotOnly_ && !open_ && value > 0 && activitySwapActive(now) && activitySwap_.retireOutgoing;
-    const auto from = pendingHandoff ? activitySwap_.pill : compactShape(now, amount);
+    auto from = pendingHandoff ? activitySwap_.pill : compactShape(now, amount);
+    if (preferences_.idleOwl && !pendingHandoff && amount < 1 && animate_ && now >= owlHappyStart_) {
+        const float hop = owlHop(progress(owlHappyStart_, owlHopTime, now)) * owlScale * (1 - amount);
+        from.top += hop;
+        from.bottom += hop;
+    }
     morphTitle = morphTitle && !pendingHandoff;
     const float fromRadius = std::min(from.right - from.left, from.bottom - from.top) / 2;
     auto clip = mixRect(from, full, value);
