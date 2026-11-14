@@ -36,6 +36,7 @@ Open Settings from the tray, from Home, or with `Zenula.exe --settings`. Notes a
 
 - **Browser tabs:** Chrome, Edge, and Brave share one media session. To control individual tabs, run `.\enable-browser-tabs.ps1` from the package, then load the `browser` folder as an unpacked extension.
 - **Windows app notifications:** the MSIX build can preview incoming Windows notifications. Build it with `scripts\package-msix.ps1` and enable **Connect Windows apps** in Settings.
+- **Romaji for Japanese lyrics:** turn it on in Settings → Features → Now Playing. Zenula uses the Windows Japanese keyboard when it is installed; otherwise it downloads a small reading dictionary once from this repository's [releases](https://github.com/alifihsan7/Zenula/releases/tag/romaji-ja-v1). The dictionary is built with `tools/build_romaji_dict.py` from [JMdict](https://www.edrdg.org/wiki/index.php/JMdict-EDICT_Dictionary_Project) by the Electronic Dictionary Research and Development Group, used under [CC BY-SA 4.0](https://www.edrdg.org/edrdg/licence.html).
 
 ## Source layout
 

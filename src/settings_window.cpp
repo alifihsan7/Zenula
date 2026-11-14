@@ -114,6 +114,7 @@ constexpr Toggle toggles[]{
     {IDC_DOT_ONLY, &Settings::dotOnly, &Settings::saveDisplay},
     {IDC_SHOW_WAVEFORM, &Settings::showWaveform, &Settings::saveIsland},
     {IDC_PILL_LYRICS, &Settings::showPillLyrics, &Settings::saveIsland},
+    {IDC_ROMAJI, &Settings::japaneseRomaji, &Settings::saveIsland},
     {IDC_ADD_COPIED_TEXT, &Settings::autoAddText, &Settings::saveClipboard},
     {IDC_ADD_SCREENSHOTS, &Settings::autoAddScreenshots, &Settings::saveClipboard},
     {IDC_CLIPBOARD_BUBBLE, &Settings::showClipboardBubble, &Settings::saveClipboard},
@@ -837,6 +838,12 @@ void SettingsWindow::content(Builder& b, View view) const {
             b.row({.title = L"Lyrics in the pill", .detail = L"Show the current line while the Lyrics view is active.",
                    .click = IDC_PILL_LYRICS}, {tryIt(SettingsTest::lyrics), toggle(IDC_PILL_LYRICS)});
             b.row({.title = L"Compact after pausing"}, {tryIt(SettingsTest::pause), choice(IDC_PAUSE_DELAY)});
+            b.close();
+            b.label(L"Lyrics");
+            b.open();
+            b.row({.title = L"Romaji for Japanese lyrics",
+                   .detail = L"Downloads a small dictionary once. Some readings can be off.", .click = IDC_ROMAJI},
+                  {toggle(IDC_ROMAJI)});
             b.close();
         } else if (which == Feature::timers) {
             const int rounds = settings_.focusRounds();
