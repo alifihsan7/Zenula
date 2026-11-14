@@ -63,4 +63,4 @@
 #define IDC_SETTINGS_TRY 1200      // + SettingsTest
 #define IDC_SETTINGS_CHOICE 1300   // + row * 4 + option
 
-#define ZENITH_VERSION_TEXT "0.1.0"
+#define ZENITH_VERSION_TEXT "1.0.0"

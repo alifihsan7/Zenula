@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$Executable,
     [Parameter(Mandatory)][string]$Output,
     [string]$Publisher = 'CN=Zenith Dot',
-    [version]$Version = '0.1.0.0',
+    [version]$Version = '1.0.0.0',
     [switch]$UnsignedTest
 )
 

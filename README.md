@@ -28,7 +28,9 @@ cmake --install out --config Release --prefix dist
 
 ## Install
 
-In `dist` (or an extracted build package), run `.\install.ps1`. It installs for the current user and adds Start menu and Startup shortcuts. To remove Zenula, exit from the tray and run `.\uninstall.ps1`.
+Download `Zenula-<version>-win-x64.zip` from [Releases](https://github.com/alifihsan7/Zenula/releases), extract it, and run `.\install.ps1` (or use `dist` from your own build). Zenula is not code-signed yet, so Windows may show "Windows protected your PC" the first time; choose **More info → Run anyway**.
+
+The installer works for the current user and adds Start menu and Startup shortcuts. To remove Zenula, exit from the tray and run `.\uninstall.ps1`.
 
 Open Settings from the tray, from Home, or with `Zenula.exe --settings`. Notes and tasks are stored in `%LOCALAPPDATA%\Zenith Dot\`.
 
