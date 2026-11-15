@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Zenula: the island's black owl (wide head, ear tufts, V brow, amber beak) on a white tile. -->
+  <defs>
+    <clipPath id="head">
+      <rect x="36" y="84" width="184" height="108" rx="54"></rect>
+    </clipPath>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="56" fill="#EEF2F7"></rect>
+  <g fill="#05070A">
+    <circle cx="100" cy="206" r="8"></circle>
+    <circle cx="113" cy="209" r="8"></circle>
+    <circle cx="143" cy="209" r="8"></circle>
+    <circle cx="156" cy="206" r="8"></circle>
+  </g>
+  <g fill="#05070A" stroke="#05070A" stroke-width="12" stroke-linejoin="round">
+    <polygon points="46,126 50,52 108,94"></polygon>
+    <polygon points="210,126 206,52 148,94"></polygon>
+    <rect x="36" y="84" width="184" height="108" rx="54"></rect>
+  </g>
+  <g clip-path="url(#head)">
+    <ellipse cx="128" cy="196" rx="80" ry="22" fill="#91CAFF" fill-opacity="0.3"></ellipse>
+  </g>
+  <g fill="#91CAFF" fill-opacity="0.14">
+    <circle cx="98" cy="138" r="34"></circle>
+    <circle cx="158" cy="138" r="34"></circle>
+  </g>
+  <path d="M62 104 Q104 110 128 132 Q152 110 194 104" fill="none" stroke="#91CAFF" stroke-opacity="0.8" stroke-width="7" stroke-linecap="round"></path>
+  <g fill="#FFFFFF" stroke="#0C1422" stroke-width="6">
+    <circle cx="98" cy="138" r="24"></circle>
+    <circle cx="158" cy="138" r="24"></circle>
+  </g>
+  <g fill="#0C1422">
+    <circle cx="98" cy="138" r="11"></circle>
+    <circle cx="158" cy="138" r="11"></circle>
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="104" cy="132" r="4.5"></circle>
+    <circle cx="164" cy="132" r="4.5"></circle>
+  </g>
+  <polygon points="118,158 138,158 128,174" fill="#FFCF8A" stroke="#FFCF8A" stroke-width="4" stroke-linejoin="round"></polygon>
+</svg>
