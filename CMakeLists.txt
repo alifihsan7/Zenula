@@ -25,6 +25,7 @@ add_executable(Zenula WIN32
     src/settings_window.cpp
     src/settings_example.cpp
     src/drop_zone.cpp
+    src/local_send.cpp
     src/browser_tabs.cpp
     src/zenith.rc
 )

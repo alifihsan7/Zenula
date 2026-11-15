@@ -225,6 +225,11 @@ constexpr auto homeRowTime = moveMotion;
 constexpr auto homeClockTime = 320ms;
 constexpr float dropEmptyField = 112;
 constexpr float dropFilledField = 36;
+constexpr float sendRowPitch = 40;
+constexpr float sendRowGap = 4;
+constexpr size_t visibleSendRows = 4;
+constexpr float sendSearchHeight = 56;
+constexpr float sendFooterHeight = 28;
 constexpr float taskRowHeight = 28;
 constexpr size_t visibleTaskRows = 4;
 constexpr float taskBarHeight = 34;
@@ -1033,7 +1038,16 @@ void Island::setDropItems(std::vector<DropPreview> items) {
     if (changed) dropMotionStart_ = animate_ ? now : Clock::time_point{};
     dropItems_ = std::move(items);
     dropBitmaps_.clear();
-    if (pressed_ == Hit::dropImage || pressed_ == Hit::removeDrop) pressed_ = Hit::none;
+    if (pressed_ == Hit::dropImage || pressed_ == Hit::removeDrop || pressed_ == Hit::dropSend) pressed_ = Hit::none;
+    // The send view follows its item to its new place, or loses it when it left.
+    if (sendOpen_ && sendItem_) {
+        const auto isSendItem = [this](DropPreview const& item) { return item.label == sendLabel_ && item.text == sendText_; };
+        if (*sendItem_ >= dropItems_.size() || !isSendItem(dropItems_[*sendItem_])) {
+            const auto found = std::ranges::find_if(dropItems_, isSendItem);
+            sendItem_ = found == dropItems_.end() ? std::nullopt :
+                        std::optional<size_t>(static_cast<size_t>(found - dropItems_.begin()));
+        }
+    }
     if (open_ && screen_ == Screen::drop && screenHeight(screen_) != oldTarget) {
         heightFrom_ = before;
         keepHeight_ = std::max(keepHeight_, before);
@@ -1395,7 +1409,9 @@ float Island::screenHeight(Screen screen) const {
         return (preferences_.rhythm == customRhythm ? 364.0f : 312.0f) + focusRecapHeight;
     }
     case Screen::scratch: return scratchTasks_ ? scratchTasksHeight : scratchNotesHeight;
-    case Screen::drop: return dropItems_.empty() ? dropEmptyHeight :
+    case Screen::drop:
+        if (sendOpen_) return sendHeight();
+        return dropItems_.empty() ? dropEmptyHeight :
         dropFilledBaseHeight + dropTilePitch * static_cast<float>(std::min(dropRowsOf(dropItems_.size()), visibleDropTileRows));
     case Screen::system: {
         const auto appRows = std::clamp<size_t>(appVolumes_.size(), 1, visibleAppRows);
@@ -1436,6 +1452,7 @@ bool Island::moving(Clock::time_point now) const {
            now - dotExitStart_ < activityDotExitTime || now - dotHoverStart_ < dotHoverTime ||
            now - hoverStart_ < hoverFadeTime || now - shrinkStart_ < toggleTime ||
            now - dropMotionStart_ < dropMotionTime || now - dropFieldStart_ < dropMotionTime ||
+           now - sendModeStart_ < scratchFadeTime ||
            now - homeRowsStart_ < homeRowTime || now - homeClockStart_ < homeClockTime ||
            now - taskMotionStart_ < taskMotionTime || now - timerSlide_.start < segmentSlideTime ||
            now - scratchSlide_.start < segmentSlideTime || now - scratchModeStart_ < scratchFadeTime ||
@@ -1855,6 +1872,13 @@ void Island::setOpen(bool open, Clock::time_point now) {
         panelOpened_ = true;
         previewUntil_ = {};
         if (shown <= 0) {
+            // A send view left open without a transfer starts over as tiles.
+            if (sendOpen_ && !sendStatus_.busy()) {
+                sendOpen_ = false;
+                sendItem_.reset();
+                sendDevices_.clear();
+                sendStatus_ = {};
+            }
             widthStart_ = {};
             screenFrom_ = screen_;
             screenStart_ = {};
@@ -2740,6 +2764,28 @@ IslandCommand Island::pointerUp(POINT client) {
         command.kind = IslandCommand::Kind::soundSettings;
         break;
     case Hit::clearDrop: command.kind = IslandCommand::Kind::clearDrop; break;
+    case Hit::dropSend:
+        if (index < dropItems_.size()) {
+            openSend(index, now);
+            command.kind = IslandCommand::Kind::openDropSend;
+            command.index = index;
+        }
+        break;
+    case Hit::sendDevice:
+        if (sendItem_ && !sendStatus_.busy() && index < sendDevices_.size()) {
+            command.kind = IslandCommand::Kind::sendDrop;
+            command.index = *sendItem_;
+            command.appId = sendDevices_[index].fingerprint;
+        }
+        break;
+    case Hit::sendBack:
+        if (sendStatus_.busy()) {
+            command.kind = IslandCommand::Kind::cancelDropSend;
+        } else {
+            closeSend(now);
+            command.kind = IslandCommand::Kind::closeDropSend;
+        }
+        break;
     case Hit::dropImage:
         command.kind = IslandCommand::Kind::openDropImage;
         command.index = index;
@@ -4979,6 +5025,15 @@ float Island::dropFieldValue(Clock::time_point now) const {
 }
 
 void Island::drawDropZone(D2D1_RECT_F panel, bool record) {
+    // Tiles and the send view swap with a short crossfade.
+    const float fade = animate_ ? easeInOut(progress(sendModeStart_, scratchFadeTime, drawNow_)) : 1;
+    if (fade < 1) pushLayer(nullptr, fade);
+    if (sendOpen_) drawDropSend(panel, record);
+    else drawDropTiles(panel, record);
+    if (fade < 1) popLayer();
+}
+
+void Island::drawDropTiles(D2D1_RECT_F panel, bool record) {
     const auto now = drawNow_;
     const float x = panel.left + padX;
     const float y = panel.top + padTop;
@@ -5071,8 +5126,9 @@ void Island::drawDropTile(DropPreview const& item, size_t index, D2D1_RECT_F til
     const bool live = index < dropItems_.size();
     record = record && live;
     const auto remove = box(tile.right - 24, tile.top + 4, 20, 20);
-    const float hot = live ? std::max(pressed(Hit::dropItem, index) ? 1.0f : hoverLevel(Hit::dropItem, index),
-                                      hoverLevel(Hit::removeDrop, index)) : 0;
+    const float hot = live ? std::max({pressed(Hit::dropItem, index) ? 1.0f : hoverLevel(Hit::dropItem, index),
+                                       hoverLevel(Hit::removeDrop, index), hoverLevel(Hit::dropSend, index),
+                                       pressed(Hit::removeDrop, index) || pressed(Hit::dropSend, index) ? 1.0f : 0.0f}) : 0;
     const auto shape = rounded(tile, 12);
     target_->FillRoundedRectangle(shape, ink(mixColor(rgb(0x1b1d21), accent_, 0.12f)));
     if (record) addTarget(tile, Hit::dropItem, index);
@@ -5123,8 +5179,176 @@ void Island::drawDropTile(DropPreview const& item, size_t index, D2D1_RECT_F til
     target_->FillEllipse(D2D1::Ellipse(pt((remove.left + remove.right) / 2, (remove.top + remove.bottom) / 2), 10, 10),
                          ink(mixColor(D2D1::ColorF(0, 0, 0, 0.72f), white(0.3f), 0.5f * down)));
     text(L"×", buttonFont_.get(), remove, rgb(inkColor));
+    // Send, in the other corner: an arrow going up.
+    const auto send = box(tile.left + 4, tile.top + 4, 20, 20);
+    const float sendDown = pressed(Hit::dropSend, index) ? 1.0f : hoverLevel(Hit::dropSend, index);
+    const auto middle = pt((send.left + send.right) / 2, (send.top + send.bottom) / 2);
+    target_->FillEllipse(D2D1::Ellipse(middle, 10, 10), ink(mixColor(D2D1::ColorF(0, 0, 0, 0.72f), white(0.3f), 0.5f * sendDown)));
+    const auto arrow = ink(rgb(inkColor));
+    target_->DrawLine(pt(middle.x, middle.y + 4), pt(middle.x, middle.y - 4), arrow, 1.4f, roundStroke_.get());
+    target_->DrawLine(pt(middle.x - 3.5f, middle.y - 0.5f), pt(middle.x, middle.y - 4), arrow, 1.4f, roundStroke_.get());
+    target_->DrawLine(pt(middle.x + 3.5f, middle.y - 0.5f), pt(middle.x, middle.y - 4), arrow, 1.4f, roundStroke_.get());
     popLayer();
-    if (record) addTarget(remove, Hit::removeDrop, index);
+    if (record) {
+        addTarget(remove, Hit::removeDrop, index);
+        addTarget(send, Hit::dropSend, index);
+    }
+}
+
+void Island::resizeDrop(Clock::time_point now) {
+    if (!open_ || screen_ != Screen::drop) return;
+    const float before = panelHeight(now);
+    heightFrom_ = before;
+    keepHeight_ = std::max(keepHeight_, before);
+    screenFrom_ = screen_;
+    screenStart_ = animate_ ? now : Clock::time_point{};
+}
+
+void Island::openSend(size_t index, Clock::time_point now) {
+    if (index >= dropItems_.size()) return;
+    resizeDrop(now);
+    sendOpen_ = true;
+    sendItem_ = index;
+    sendLabel_ = dropItems_[index].label;
+    sendText_ = dropItems_[index].text;
+    sendDevices_.clear();
+    if (!sendStatus_.busy()) sendStatus_ = {};
+    sendModeStart_ = animate_ ? now : Clock::time_point{};
+}
+
+void Island::closeSend(Clock::time_point now) {
+    if (!sendOpen_) return;
+    resizeDrop(now);
+    sendOpen_ = false;
+    sendItem_.reset();
+    sendDevices_.clear();
+    sendStatus_ = {};
+    sendModeStart_ = animate_ ? now : Clock::time_point{};
+}
+
+void Island::setSendDevices(std::vector<LocalSendDevice> const& devices) {
+    if (!sendOpen_) return;
+    if (std::min(devices.size(), visibleSendRows) != std::min(sendDevices_.size(), visibleSendRows)) resizeDrop(Clock::now());
+    sendDevices_ = devices;
+}
+
+void Island::setSendStatus(LocalSendStatus const& status) {
+    using Stage = LocalSendStatus::Stage;
+    const bool finished = status.stage == Stage::sent || status.stage == Stage::declined || status.stage == Stage::failed;
+    // Out of sight, the result splits off as a bubble.
+    if (finished && !(open_ && screen_ == Screen::drop && sendOpen_)) {
+        IslandAlert alert{IslandAlert::Kind::sent};
+        if (status.stage == Stage::sent) {
+            alert.title = L"Sent";
+            alert.value = status.device;
+        } else {
+            alert.title = status.stage == Stage::declined ? L"Declined" : L"Not sent";
+            alert.value = status.stage == Stage::declined ? status.device : status.message;
+            alert.color = 0xff9f0au;
+        }
+        notify(std::move(alert));
+        if (!open_) {
+            sendOpen_ = false;
+            sendItem_.reset();
+            sendDevices_.clear();
+            sendStatus_ = {};
+            return;
+        }
+    }
+    sendStatus_ = status;
+}
+
+float Island::sendHeight() const {
+    const auto rows = std::min(sendDevices_.size(), visibleSendRows);
+    const float list = rows ? sendRowPitch * static_cast<float>(rows) - sendRowGap : sendSearchHeight;
+    return navHeight + dropTop + list + sendFooterHeight + 14;
+}
+
+void Island::drawDeviceGlyph(LocalSendDevice const& device, D2D1_POINT_2F center, D2D1_COLOR_F color) {
+    if (device.type == L"mobile") {
+        target_->DrawRoundedRectangle(rounded(box(center.x - 5, center.y - 8, 10, 16), 2.5f), ink(color), 1.4f);
+        target_->DrawLine(pt(center.x - 1.5f, center.y + 5), pt(center.x + 1.5f, center.y + 5), ink(color), 1.4f,
+                          roundStroke_.get());
+        return;
+    }
+    target_->DrawRoundedRectangle(rounded(box(center.x - 7, center.y - 6, 14, 9.5f), 1.5f), ink(color), 1.4f);
+    target_->DrawLine(pt(center.x - 9, center.y + 6), pt(center.x + 9, center.y + 6), ink(color), 1.4f, roundStroke_.get());
+}
+
+void Island::drawDropSend(D2D1_RECT_F panel, bool record) {
+    using Stage = LocalSendStatus::Stage;
+    const float x = panel.left + padX;
+    const float y = panel.top + padTop;
+    if (record) dropViewport_ = {};
+    text(L"Send", titleFont_.get(), box(x, y, innerWidth, 22), rgb(inkColor));
+    const bool busy = sendStatus_.busy();
+    const bool finished = sendStatus_.stage == Stage::sent || sendStatus_.stage == Stage::declined ||
+                          sendStatus_.stage == Stage::failed;
+    const auto back = box(x + innerWidth - 70, y - 2, 70, 26);
+    const float backHot = pressed(Hit::sendBack) ? 1.6f : hoverLevel(Hit::sendBack);
+    if (backHot > 0) target_->FillRoundedRectangle(rounded(back, 8), ink(white(0.04f * backHot)));
+    text(busy ? L"Cancel" : finished ? L"Done" : L"Back", buttonFont_.get(), back, rgb(mutedColor));
+    if (record) addTarget(back, Hit::sendBack);
+    text(sendText_ ? std::wstring(L"Text") : sendLabel_, bodyEndFont_.get(), box(x + 60, y, back.left - 6 - x - 60, 22),
+         rgb(mutedColor));
+
+    const float top = panel.top + dropTop;
+    const auto rows = std::min(sendDevices_.size(), visibleSendRows);
+    if (rows == 0) {
+        text(L"Looking for devices…", headingCenterFont_.get(), box(x, top + 2, innerWidth, 26), rgb(inkColor));
+        text(L"Open LocalSend on the other device", buttonFont_.get(), box(x, top + 30, innerWidth, 18), rgb(mutedColor));
+    }
+    const bool canSend = sendItem_.has_value() && !busy;
+    for (size_t index = 0; index < rows; ++index) {
+        const auto& device = sendDevices_[index];
+        const auto row = box(x, top + sendRowPitch * static_cast<float>(index), innerWidth, sendRowPitch - sendRowGap);
+        const bool active = sendStatus_.stage != Stage::idle && sendStatus_.fingerprint == device.fingerprint;
+        const float hot = canSend ? (pressed(Hit::sendDevice, index) ? 1.6f : hoverLevel(Hit::sendDevice, index)) : 0;
+        const auto shape = rounded(row, 10);
+        target_->FillRoundedRectangle(shape, ink(mixColor(rgb(0x1b1d21), accent_, active ? 0.24f : 0.12f)));
+        if (hot > 0) target_->FillRoundedRectangle(shape, ink(white(0.05f * hot)));
+        const float middle = (row.top + row.bottom) / 2;
+        drawDeviceGlyph(device, pt(row.left + 18, middle), active ? accent_ : rgb(mutedColor));
+        std::wstring state = device.model;
+        if (active) {
+            switch (sendStatus_.stage) {
+            case Stage::waiting: state = L"Waiting"; break;
+            case Stage::sending:
+                state = std::to_wstring(sendStatus_.total ? sendStatus_.sent * 100 / sendStatus_.total : 0) + L"%";
+                break;
+            case Stage::sent: state = L"Sent"; break;
+            case Stage::declined: state = L"Declined"; break;
+            case Stage::failed: state = L"Failed"; break;
+            default: break;
+            }
+        }
+        const float stateWidth = std::min(110.0f, std::ceil(measure(state, bodyEndFont_.get())) + 2);
+        text(device.alias, bodyFont_.get(), box(row.left + 36, row.top, row.right - row.left - 36 - stateWidth - 20,
+             row.bottom - row.top), rgb(inkColor));
+        text(state, bodyEndFont_.get(), box(row.right - 10 - stateWidth, row.top, stateWidth, row.bottom - row.top),
+             active ? accent_ : rgb(mutedColor));
+        if (active && sendStatus_.stage == Stage::sending && sendStatus_.total) {
+            const auto track = box(row.left + 36, row.bottom - 5, row.right - row.left - 46, 2);
+            target_->FillRoundedRectangle(rounded(track, 1), ink(white(0.1f)));
+            const float done = static_cast<float>(static_cast<double>(sendStatus_.sent) / static_cast<double>(sendStatus_.total));
+            target_->FillRoundedRectangle(rounded(box(track.left, track.top, (track.right - track.left) * done, 2), 1),
+                                          ink(accent_));
+        }
+        if (record && canSend) addTarget(row, Hit::sendDevice, index);
+    }
+
+    std::wstring footer;
+    switch (sendStatus_.stage) {
+    case Stage::idle: footer = sendItem_ ? L"Same network, LocalSend open" : L"This item left Drop Zone"; break;
+    case Stage::waiting: footer = L"Accept it on " + sendStatus_.device; break;
+    case Stage::sending: footer = L"Sending to " + sendStatus_.device; break;
+    case Stage::sent: footer = L"Sent to " + sendStatus_.device; break;
+    case Stage::declined: footer = sendStatus_.device + L" declined"; break;
+    case Stage::failed: footer = sendStatus_.message; break;
+    }
+    const float list = rows ? sendRowPitch * static_cast<float>(rows) - sendRowGap : sendSearchHeight;
+    text(footer, buttonFont_.get(), box(x, top + list + 6, innerWidth, 18),
+         sendStatus_.stage == Stage::failed || sendStatus_.stage == Stage::declined ? rgb(0xff9f0a) : rgb(mutedColor));
 }
 
 void Island::drawSystem(D2D1_RECT_F panel, bool record) {
@@ -6222,6 +6446,14 @@ void Island::drawAlertIcon(IslandAlert::Kind kind, D2D1_POINT_2F origin, D2D1_CO
     case IslandAlert::Kind::mediaStarted:
         drawScreenGlyph(Screen::media, box(0, 0, 16, 16), color);
         break;
+    case IslandAlert::Kind::sent: {
+        PathBuilder arrow(graphics_.get());
+        arrow.move(pt(8, 10), false).line(pt(8, 1.75f));
+        arrow.move(pt(4.5f, 5.25f), false).line(pt(8, 1.75f)).line(pt(11.5f, 5.25f));
+        arrow.move(pt(2, 9.5f), false).line(pt(2, 14)).line(pt(14, 14)).line(pt(14, 9.5f));
+        target_->DrawGeometry(arrow.finish().get(), ink(color), 1.5f, roundStroke_.get());
+        break;
+    }
     case IslandAlert::Kind::notification: {
         PathBuilder bell(graphics_.get());
         bell.move(pt(2, 11.5f), false).line(pt(4, 9)).line(pt(4, 6))
