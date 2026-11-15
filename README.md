@@ -4,7 +4,7 @@
 
 # Zenula
 
-A dynamic island for Windows. Zenula sits at the top center of your main display as a small dot (or a little owl), grows into a pill while music or a timer runs, and opens a panel when you hover it.
+A dynamic island for Windows. Zenula sits at the top center of your main display as a small dot (or a little owl), grows into a pill while music or a timer runs, and opens a panel when you hover it. See it in action on the [website](https://alifihsan7.github.io/Zenula/).
 
 It is one native process (C++20, Win32, Direct2D, C++/WinRT). Nothing animates or polls while the island is idle, so it stays around 15 MB of memory and near zero CPU.
 
