@@ -32,7 +32,8 @@ Also:
 - When music and a timer run together, one is the pill and the other a small capsule beside it.
 - Camera, microphone, and screen sharing show as icons.
 - The accent follows the album artwork, Zenula blue, a color you pick, or a color per panel.
-- **Dot only** keeps the island small; hovering still opens the panel. Zenula can hide in fullscreen apps and respects Do Not Disturb.
+- Two themes: **Classic** idles as a dot, **Owl** as a little owl that blinks, glances at bubbles, and hops when a timer ends.
+- **Dot only** keeps the island small in either theme (the owl becomes a pair of eyes); hovering still opens the panel. Zenula can hide in fullscreen apps and respects Do Not Disturb.
 
 Open Settings from the tray, from Home, or with `Zenula.exe --settings`.
 

@@ -65,7 +65,8 @@ struct Settings {
     bool hideInFullscreen = true;
     bool dotOnly = false;   // the island stays a dot; hovering still opens it
     bool fixedPillMinimum = false;
-    bool idleOwl = false;   // the idle island is the Zenula owl instead of a dot
+    bool owlTheme() const { return theme == 1; }
+    unsigned theme = 0;   // 0 Classic: the idle island is a dot; 1 Owl: it is the Zenula owl
     unsigned islandSize = 1;
     unsigned accentMode = 0;
     unsigned customAccent = 0x91caff;

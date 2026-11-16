@@ -291,6 +291,8 @@ private:
     void prepareText();
     void releaseDeviceResources();
     void drawCompactContent(Clock::time_point now, D2D1_RECT_F shape, bool hideTitle, bool hideArt = false);
+    bool owlMini() const;     // the Owl theme with Dot only: a small capsule with just the eyes
+    float owlSize() const;
     float idleWidth() const;
     float idleHeight() const;
     void drawOwlEars(D2D1_POINT_2F center, float scale, float opacity);

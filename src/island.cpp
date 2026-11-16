@@ -35,6 +35,10 @@ constexpr float dotSize = 12;
 constexpr float owlHeight = 26;
 constexpr float owlWidth = owlHeight * 76 / 30;
 constexpr float owlScale = owlHeight / 30;
+// With Dot only the owl is a capsule as tall as the dot, showing just its eyes.
+constexpr float owlMiniHeight = dotSize;
+constexpr float owlMiniWidth = 28;
+constexpr float owlMiniScale = owlMiniHeight / 30;
 constexpr auto owlBlinkTime = 140ms;
 constexpr auto owlHappyTime = 1600ms;
 constexpr auto owlHopTime = 520ms;
@@ -1868,7 +1872,7 @@ void Island::setOpen(bool open, Clock::time_point now) {
                   pillTitleVisible_ && pillTrackSize_.height <= pillHeight &&
                   pillAmount(now) >= 1 && pillContent_ == PillMode::media &&
                   !pillLyric_.layout && !previousPillLyric_.layout;
-    if (!open && preferences_.idleOwl && animate_) {
+    if (!open && preferences_.owlTheme() && animate_) {
         // As the panel closes the owl looks to where the pointer left, then ahead again.
         owlGlance_ = {std::clamp(lastPointer_.x / 140, -1.0f, 1.0f) * 2.4f,
                       std::clamp((lastPointer_.y - pillCenterY) / 90, -1.0f, 1.0f) * 1.8f};
@@ -2332,10 +2336,10 @@ bool Island::pointerMove(POINT client) {
     }
     const bool navChanged = setNavExpanded(open_ && inside(navHoverRect_, point), now);
     bool looked = false;
-    if (!open_ && preferences_.idleOwl && pillMode_ == PillMode::dot && hit == Hit::pill) {
+    if (!open_ && preferences_.owlTheme() && pillMode_ == PillMode::dot && hit == Hit::pill) {
         // The owl's pupils follow the pointer while it is over the owl.
-        const D2D1_POINT_2F look{std::clamp(point.x / (owlWidth / 2), -1.0f, 1.0f) * 1.8f,
-                                 std::clamp((point.y - pillCenterY) / (owlHeight / 2), -1.0f, 1.0f) * 1.2f};
+        const D2D1_POINT_2F look{std::clamp(point.x / (idleWidth() / 2), -1.0f, 1.0f) * 1.8f,
+                                 std::clamp((point.y - pillCenterY) / (idleHeight() / 2), -1.0f, 1.0f) * 1.2f};
         looked = std::abs(look.x - owlLook_.x) > 0.15f || std::abs(look.y - owlLook_.y) > 0.15f;
         if (looked) owlLook_ = look;
     }
@@ -2783,12 +2787,14 @@ bool Island::overControl() const {
     return hovered_ != Hit::none;
 }
 
-float Island::idleWidth() const { return preferences_.idleOwl ? owlWidth : dotSize; }
-float Island::idleHeight() const { return preferences_.idleOwl ? owlHeight : dotSize; }
+bool Island::owlMini() const { return dotOnly_; }
+float Island::owlSize() const { return owlMini() ? owlMiniScale : owlScale; }
+float Island::idleWidth() const { return !preferences_.owlTheme() ? dotSize : owlMini() ? owlMiniWidth : owlWidth; }
+float Island::idleHeight() const { return !preferences_.owlTheme() ? dotSize : owlMini() ? owlMiniHeight : owlHeight; }
 
 void Island::setDotHover(bool hot, Clock::time_point now) {
     if (hot == dotHot_) return;
-    if (hot && preferences_.idleOwl && animate_) owlBlinkStart_ = now;   // one blink as the pointer arrives
+    if (hot && preferences_.owlTheme() && animate_) owlBlinkStart_ = now;   // one blink as the pointer arrives
     if (!hot) owlLook_ = {};
     dotHoverFrom_ = dotHover(now);
     dotHot_ = hot;
@@ -3354,6 +3360,7 @@ void Island::drawCompanionShell(D2D1_RECT_F shape, float pinch) {
 
 // The owl, centered on `center`, in units of the 30 tall grid scaled by `scale`.
 void Island::drawOwlEars(D2D1_POINT_2F center, float scale, float opacity) {
+    if (owlMini()) return;
     const auto at = [&](float x, float y) { return pt(center.x + x * scale, center.y + y * scale); };
     const auto color = D2D1::ColorF(0, 0, 0, opacity);
     for (const float side : {-1.0f, 1.0f}) {
@@ -3382,7 +3389,15 @@ void Island::drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool 
     }
     look.x = std::clamp(look.x, -2.4f, 2.4f);
     look.y = std::clamp(look.y, -1.8f, 1.8f);
-    if (glow) {
+    const bool mini = owlMini();   // just the eyes, larger for the small capsule
+    const float eyeX = mini ? 13.0f : 11.0f, eyeY = mini ? 0.0f : -2.0f;
+    const float eyeR = mini ? 9.5f : 6.8f, pupilR = mini ? 4.6f : 3.2f;
+    const float lidWidth = mini ? 2.0f : 1.0f;   // strokes stay readable at the small size
+    if (mini) {
+        look.x *= 1.6f;
+        look.y *= 1.6f;
+    }
+    if (glow && !mini) {
         // A soft accent glow along the bottom edge; dimmer while asleep.
         const D2D1_GRADIENT_STOP stops[]{{0, withAlpha(accent_, (sleeping ? 0.12f : 0.3f) * opacity)}, {1, withAlpha(accent_, 0)}};
         winrt::com_ptr<ID2D1GradientStopCollection> collection;
@@ -3392,45 +3407,49 @@ void Island::drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool 
             D2D1::RadialGradientBrushProperties(at(0, 17), {}, 30 * scale, 8 * scale), collection.get(), brush.put()));
         target_->FillEllipse(D2D1::Ellipse(at(0, 17), 30 * scale, 8 * scale), brush.get());
     }
-    for (const float side : {-1.0f, 1.0f})
-        target_->FillEllipse(D2D1::Ellipse(at(11 * side, -2), 11 * scale, 11 * scale), ink(withAlpha(accent_, 0.1f * opacity)));
-    PathBuilder brow(graphics_.get());
-    brow.move(at(-22, -12), false);
-    quad(brow, at(-22, -12), at(-8, -10), at(0, -4));
-    quad(brow, at(0, -4), at(8, -10), at(22, -12));
-    target_->DrawGeometry(brow.finish().get(), ink(withAlpha(accent_, 0.55f * opacity)), 2 * scale, roundStroke_.get());
+    if (!mini) {
+        for (const float side : {-1.0f, 1.0f})
+            target_->FillEllipse(D2D1::Ellipse(at(11 * side, -2), 11 * scale, 11 * scale), ink(withAlpha(accent_, 0.1f * opacity)));
+        PathBuilder brow(graphics_.get());
+        brow.move(at(-22, -12), false);
+        quad(brow, at(-22, -12), at(-8, -10), at(0, -4));
+        quad(brow, at(0, -4), at(8, -10), at(22, -12));
+        target_->DrawGeometry(brow.finish().get(), ink(withAlpha(accent_, 0.55f * opacity)), 2 * scale, roundStroke_.get());
+    }
 
     const auto lid = rgb(0xe8eef6, opacity);
     const auto navy = rgb(0x0c1422, opacity);
     if (happy && !sleeping) {
         PathBuilder smile(graphics_.get());
         for (const float side : {-1.0f, 1.0f}) {
-            smile.move(at(11 * side - 6, 0), false);
-            quad(smile, at(11 * side - 6, 0), at(11 * side, -6), at(11 * side + 6, 0));
+            smile.move(at(eyeX * side - eyeR * 0.88f, eyeY + 2), false);
+            quad(smile, at(eyeX * side - eyeR * 0.88f, eyeY + 2), at(eyeX * side, eyeY + 2 - eyeR * 0.88f),
+                 at(eyeX * side + eyeR * 0.88f, eyeY + 2));
         }
-        target_->DrawGeometry(smile.finish().get(), ink(lid), 2.2f * scale, roundStroke_.get());
+        target_->DrawGeometry(smile.finish().get(), ink(lid), 2.2f * lidWidth * scale, roundStroke_.get());
     } else if (sleeping) {
         PathBuilder shut(graphics_.get());
         for (const float side : {-1.0f, 1.0f}) {
-            shut.move(at(11 * side - 6, -1), false);
-            quad(shut, at(11 * side - 6, -1), at(11 * side, 2), at(11 * side + 6, -1));
+            shut.move(at(eyeX * side - eyeR * 0.88f, eyeY + 1), false);
+            quad(shut, at(eyeX * side - eyeR * 0.88f, eyeY + 1), at(eyeX * side, eyeY + 1 + eyeR * 0.44f),
+                 at(eyeX * side + eyeR * 0.88f, eyeY + 1));
         }
-        target_->DrawGeometry(shut.finish().get(), ink(lid), 2 * scale, roundStroke_.get());
+        target_->DrawGeometry(shut.finish().get(), ink(lid), 2 * lidWidth * scale, roundStroke_.get());
     } else {
         const float blinkT = animate_ ? progress(owlBlinkStart_, owlBlinkTime, now) : 1.0f;
         const float open = blinkT < 1 ? 1 - 0.9f * std::sin(pi * blinkT) : 1.0f;
         for (const float side : {-1.0f, 1.0f}) {
-            const auto eye = at(11 * side, -2);
-            target_->FillEllipse(D2D1::Ellipse(eye, 6.8f * scale, 6.8f * scale * open), ink(white(opacity)));
-            target_->DrawEllipse(D2D1::Ellipse(eye, 6.8f * scale, 6.8f * scale * open), ink(navy), 2 * scale);
+            const auto eye = at(eyeX * side, eyeY);
+            target_->FillEllipse(D2D1::Ellipse(eye, eyeR * scale, eyeR * scale * open), ink(white(opacity)));
+            target_->DrawEllipse(D2D1::Ellipse(eye, eyeR * scale, eyeR * scale * open), ink(navy), 2 * scale);
             const auto pupil = pt(eye.x + look.x * scale, eye.y + look.y * scale);
-            target_->FillEllipse(D2D1::Ellipse(pupil, 3.2f * scale, 3.2f * scale * open), ink(navy));
+            target_->FillEllipse(D2D1::Ellipse(pupil, pupilR * scale, pupilR * scale * open), ink(navy));
             if (open > 0.6f)
-                target_->FillEllipse(D2D1::Ellipse(pt(pupil.x + 1.6f * scale, pupil.y - 1.6f * scale), 1.1f * scale, 1.1f * scale),
-                                     ink(white(opacity)));
+                target_->FillEllipse(D2D1::Ellipse(pt(pupil.x + pupilR / 2 * scale, pupil.y - pupilR / 2 * scale),
+                                                   pupilR * 0.34f * scale, pupilR * 0.34f * scale), ink(white(opacity)));
         }
     }
-    fillPolygon({at(-3, 3), at(3, 3), at(0, 8)}, rgb(0xffcf8a, opacity));
+    if (!mini) fillPolygon({at(-3, 3), at(3, 3), at(0, 8)}, rgb(0xffcf8a, opacity));
 }
 
 void Island::drawLyricsGlyph(D2D1_POINT_2F origin, D2D1_COLOR_F color) {
@@ -3743,7 +3762,7 @@ void Island::drawIsland(Clock::time_point now, float value, float amount, bool m
     const auto full = panelRect(now);
     const bool pendingHandoff = !dotOnly_ && !open_ && value > 0 && activitySwapActive(now) && activitySwap_.retireOutgoing;
     auto from = pendingHandoff ? activitySwap_.pill : compactShape(now, amount);
-    if (preferences_.idleOwl && !pendingHandoff && amount < 1 && animate_ && now >= owlHappyStart_) {
+    if (preferences_.owlTheme() && !pendingHandoff && amount < 1 && animate_ && now >= owlHappyStart_) {
         const float hop = owlHop(progress(owlHappyStart_, owlHopTime, now)) * owlScale * (1 - amount);
         from.top += hop;
         from.bottom += hop;
@@ -3765,9 +3784,9 @@ void Island::drawIsland(Clock::time_point now, float value, float amount, bool m
         addTarget(hit, Hit::pill);
     }
     const auto shell = rounded(clip, radius);
-    const float owl = preferences_.idleOwl && !pendingHandoff ? (1 - lin(0, 0.35f, amount)) * (1 - lin(0, 0.3f, value)) : 0.0f;
+    const float owl = preferences_.owlTheme() && !pendingHandoff ? (1 - lin(0, 0.35f, amount)) * (1 - lin(0, 0.3f, value)) : 0.0f;
     const auto owlCenter = pt((from.left + from.right) / 2, (from.top + from.bottom) / 2);
-    if (owl > 0) drawOwlEars(owlCenter, owlScale, owl);
+    if (owl > 0) drawOwlEars(owlCenter, owlSize(), owl);
     fillShell(shell);
     // The owl is flat black, not the shell's tinted gradient.
     if (owl > 0) target_->FillRoundedRectangle(shell, ink(D2D1::ColorF(0, 0, 0, owl)));
@@ -3784,7 +3803,7 @@ void Island::drawIsland(Clock::time_point now, float value, float amount, bool m
     winrt::com_ptr<ID2D1RoundedRectangleGeometry> mask;
     winrt::check_hresult(graphics_->CreateRoundedRectangleGeometry(rounded(clip, radius), mask.put()));
     pushLayer(mask.get(), 1);
-    if (owl > 0) drawOwlFace(owlCenter, owlScale, owl, true, now);
+    if (owl > 0) drawOwlFace(owlCenter, owlSize(), owl, true, now);
     if (compactOpacity > 0) {
         if (compactOpacity < 1) pushLayer(nullptr, compactOpacity);
         if (pendingHandoff) drawHandoffOutgoing(from, 1);
@@ -5864,7 +5883,7 @@ void Island::startAlert(IslandAlert alert, Clock::time_point now, bool update) {
     alertVelocity_ = 0;
     alertTo_ = 1;
     alertStart_ = closing ? std::max(now, panelStart_ + shapeTime) : now;
-    if (preferences_.idleOwl && animate_) owlBlinkStart_ = alertStart_;   // the owl notices
+    if (preferences_.owlTheme() && animate_) owlBlinkStart_ = alertStart_;   // the owl notices
 }
 
 void Island::beginAlertClose(Clock::time_point now) {
@@ -6021,19 +6040,30 @@ void Island::drawSplit(Clock::time_point now, float amount, std::optional<D2D1_R
     float copyOpacity = 0;
     const bool fromPill = amount >= 1;
     // The idle owl stays and the bubble splits off beside it, the way it does from a pill.
-    const bool fromOwl = !fromPill && !slot && preferences_.idleOwl;
+    const bool fromOwl = !fromPill && !slot && preferences_.owlTheme() && !owlMini();
+    // The small owl steps aside and a bubble of the usual height grows out from behind it.
+    const bool fromMini = !fromPill && !slot && preferences_.owlTheme() && owlMini();
     const bool liquid = fromPill || fromOwl;
     const auto source = slot.value_or(compactShape(now, amount));
     const auto size = D2D1::SizeF(source.right - source.left, source.bottom - source.top);
     const float scale = liquid ? size.height / pillHeight : 1;
     const float shiftX = slot ? slot->left : 0;
-    const float top = slot ? slot->top : fromOwl ? source.top : pillTop;
+    const float top = slot ? slot->top : fromOwl || fromMini ? source.top : pillTop;
     if (liquid) {
         const auto frame = makeLiquidSplit(shape, size.width / scale, target / scale, p, slot.has_value());
         left = frame.left;
         area = frame.bubble;
         alertOpacity = lin(pinchAt - 0.1f, pinchAt + 0.12f, p);
         copyOpacity = lin(0.8f, 1, p);
+    } else if (fromMini) {
+        const float group = size.width + activityDotGap + target;
+        left = std::lerp(source.left, -group / 2, p);
+        const auto rest = box(-group / 2 + size.width + activityDotGap, pillCenterY - activityDotSize / 2, target, activityDotSize);
+        area = mixRect(box(left, source.top, size.width, size.height), rest, p);
+        capsule(shape, area);
+        const float t = lin(0.31f, 0.82f, p);
+        alertOpacity = t * t * (3 - 2 * t);
+        copyOpacity = 1;
     } else {
         // From the idle dot the bubble grows out of the dot itself.
         const float width = std::lerp(idleWidth(), target, p);
@@ -6063,18 +6093,18 @@ void Island::drawSplit(Clock::time_point now, float amount, std::optional<D2D1_R
     }
     const auto primary = box(shiftX + left * scale, top, size.width, size.height);
     const auto owlCenter = pt((primary.left + primary.right) / 2, (primary.top + primary.bottom) / 2);
-    if (fromOwl) drawOwlEars(owlCenter, owlScale, 1);
+    if (fromOwl) drawOwlEars(owlCenter, owlSize(), 1);
     fillShell(visible);
     if (!drawsWholePill) target_->PopAxisAlignedClip();
 
-    if (liquid && drawsWholePill) {
+    if ((liquid || fromMini) && drawsWholePill) {
         winrt::com_ptr<ID2D1RoundedRectangleGeometry> clip;
         winrt::check_hresult(graphics_->CreateRoundedRectangleGeometry(
             rounded(primary, size.height / 2), clip.put()));
         pushLayer(clip.get(), 1);
-        if (fromOwl) {
+        if (fromOwl || fromMini) {
             target_->FillRectangle(primary, ink(D2D1::ColorF(0, 0, 0)));
-            drawOwlFace(owlCenter, owlScale, 1, true, now);
+            drawOwlFace(owlCenter, owlSize(), 1, true, now);
         } else {
             drawCompactContent(now, primary, false);
         }
@@ -6301,7 +6331,7 @@ void Island::draw(HWND window) {
     // The surface only covers what is drawn this frame.
     const auto compact = compactShape(now, amount);
     auto bounds = unite(grow(compact, 2, 2), compactHit(compact, amount, compactForControls));
-    if (preferences_.idleOwl && amount < 1) bounds.top = std::min(bounds.top, pillCenterY - 26 * owlScale - 3);
+    if (preferences_.owlTheme() && amount < 1) bounds.top = std::min(bounds.top, pillCenterY - 26 * owlScale - 3);
     if (panelVisible) bounds = unite(bounds, grow(panelRect(now), 2, 2));
     const bool splitVisible = !panelVisible && bubbleShowing();
     const float splitAmount = alertFromOccludedDot_ ? 0 : amount;
@@ -6319,11 +6349,13 @@ void Island::draw(HWND window) {
         bounds = unite(bounds, grow(fullBubble, gap + 2, 2));
     } else if (splitVisible) {
         const bool fromPill = splitAmount >= 1;
-        const bool liquid = fromPill || preferences_.idleOwl;   // the owl keeps its place beside the bubble
+        // The owl keeps its place beside the bubble; the small one sits beside a bubble of the usual height.
+        const bool mini = !fromPill && preferences_.owlTheme() && owlMini();
+        const bool liquid = fromPill || (preferences_.owlTheme() && !mini);
         const float height = liquid ? compact.bottom - compact.top : activityDotSize;
         const float bubble = std::max(alertWidth_, height);
-        const float gap = liquid ? releaseGap * height / pillHeight : 0;
-        const float primaryWidth = liquid ? compact.right - compact.left : 0;
+        const float gap = liquid ? releaseGap * height / pillHeight : mini ? activityDotGap : 0;
+        const float primaryWidth = liquid || mini ? compact.right - compact.left : 0;
         const float width = primaryWidth + gap + bubble;
         const float top = fromPill ? pillTop : pillCenterY - height / 2;
         fullBubble = box(-width / 2 + primaryWidth + gap, top, bubble, height);
