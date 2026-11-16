@@ -600,10 +600,13 @@ void findMatchingLyrics(JsonArray const& records, std::wstring_view title, std::
         const auto length = record.GetNamedValue(L"duration", nullptr);
         if (!length || length.ValueType() != JsonValueType::Number) continue;
         const double gap = std::abs(length.GetNumber() - duration);
-        if (!std::isfinite(gap) || gap > 4 || !equalText(titleKey(field(record, L"trackName")), wantedTitle)) continue;
+        if (!std::isfinite(gap) || gap > 10 || !equalText(titleKey(field(record, L"trackName")), wantedTitle)) continue;
         const auto recordArtist = field(record, L"artistName");
         const bool otherAlbum = wantedAlbum.empty() || !equalText(cleanMetadata(field(record, L"albumName")), wantedAlbum);
         const bool otherArtist = !sameArtist(recordArtist, artist);
+        // Uploads of one recording often differ by a few seconds of silence at the end; with title,
+        // artist and album all agreeing, up to 10 seconds is the same song.
+        if (gap > 4 && (otherArtist || otherAlbum)) continue;
         // Another artist name only counts when it is the same name in another script or the album agrees,
         // and then the length must agree closely too, so covers and live takes stay out.
         if (otherArtist && (gap > 2 || (otherAlbum && !otherScripts(mainArtist(recordArtist), mainArtist(artist))))) continue;
@@ -614,6 +617,10 @@ void findMatchingLyrics(JsonArray const& records, std::wstring_view title, std::
     });
     for (const auto& match : matches) {
         result.lines = timedLines(field(match.record, L"syncedLyrics"));
+        if (match.durationGap > 4 && !result.lines.empty() && result.lines.back().seconds >= duration) {
+            result.lines.clear();   // lyrics running past the end are timed for another version
+            continue;
+        }
         if (!result.lines.empty()) return;
         if (result.plain.empty()) result.plain = field(match.record, L"plainLyrics");
     }
