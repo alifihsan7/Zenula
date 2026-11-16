@@ -27,12 +27,6 @@ struct DropPreview {
     std::shared_ptr<const DropThumbnail> thumbnail;
 };
 
-// What an item holds, for sending it elsewhere: a file path, or text.
-struct DropContent {
-    std::wstring path;
-    std::wstring text;
-};
-
 class DropZone {
 public:
     using Hover = std::function<void(bool)>;
@@ -50,7 +44,6 @@ public:
     void drag(size_t index);
     bool openImage(size_t index, HWND owner);
     HWND previewWindow() const { return previewWindow_; }
-    std::optional<DropContent> content(size_t index) const;
     void remove(size_t index);
     void clear();
 

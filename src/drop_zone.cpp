@@ -440,31 +440,6 @@ void DropZone::clear() {
     publish();
 }
 
-std::optional<DropContent> DropZone::content(size_t index) const {
-    if (index >= items_.size()) return std::nullopt;
-    const bool text = items_[index].preview.text;
-    auto requested = format(text ? CF_UNICODETEXT : CF_HDROP);
-    Medium medium;
-    if (FAILED(items_[index].data->GetData(&requested, &medium.value)) || medium.value.tymed != TYMED_HGLOBAL)
-        return std::nullopt;
-    DropContent content;
-    if (text) {
-        const auto raw = static_cast<wchar_t const*>(GlobalLock(medium.value.hGlobal));
-        if (!raw) return std::nullopt;
-        content.text.assign(raw, wcsnlen(raw, GlobalSize(medium.value.hGlobal) / sizeof(wchar_t)));
-        GlobalUnlock(medium.value.hGlobal);
-        if (content.text.empty()) return std::nullopt;
-    } else {
-        const auto files = static_cast<HDROP>(medium.value.hGlobal);
-        const auto length = DragQueryFileW(files, 0, nullptr, 0);
-        if (length == 0) return std::nullopt;
-        content.path.resize(length + 1);
-        if (DragQueryFileW(files, 0, content.path.data(), length + 1) != length) return std::nullopt;
-        content.path.resize(length);
-    }
-    return content;
-}
-
 bool DropZone::openImage(size_t index, HWND owner) {
     if (index >= items_.size() || items_[index].imagePath.empty()) return false;
     auto image = fileThumbnail(items_[index].imagePath, 1440, 1000);

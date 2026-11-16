@@ -9,7 +9,6 @@
 #include "tasks.hpp"
 #include "countdown.hpp"
 #include "drop_zone.hpp"
-#include "local_send.hpp"
 #include "power.hpp"
 #include "prayer.hpp"
 #include "system.hpp"
@@ -39,12 +38,11 @@ struct IslandCommand {
                       selectAudioOutput, soundSettings, notificationSettings, removeDrop, clearDrop, openDropImage, appVolume, appMute,
                       focusRhythm, prayerLocation, openSettings, overlapMode,
                       addTask, toggleTask, removeTask, clearDoneTasks,
-                      setBrightness, openPrayerSearch, copyScratchpad, clearScratchpad,
-                      openDropSend, sendDrop, cancelDropSend, closeDropSend };
+                      setBrightness, openPrayerSearch, copyScratchpad, clearScratchpad };
     Kind kind = Kind::none;
     double seconds = 0;              // seek position; appVolume: level 0..1; appMute: 1 = on
     std::wstring appId;
-    size_t index = 0;                // focusRhythm: the rhythm (3 = Custom); sendDrop: the item (appId: the device)
+    size_t index = 0;                // focusRhythm: the rhythm (3 = Custom)
     unsigned focusMinutes = 0;       // focusRhythm: Custom lengths and rounds
     unsigned breakMinutes = 0;
     unsigned rounds = 0;
@@ -54,7 +52,7 @@ struct IslandCommand {
 struct IslandAlert {
     enum class Kind { copy, charging, battery, lowBattery, focusDone, breakDone, timerDone,
                       microphone, camera, screenCapture, capsLock, numLock, bluetooth, bluetoothAudio, prayer,
-                      notification, connection, mediaStarted, sent };
+                      notification, connection, mediaStarted };
     Kind kind = Kind::copy;
     std::wstring title;
     std::wstring value;
@@ -119,9 +117,6 @@ public:
     void setTaskInputOpen(bool open);
     void setDropItems(std::vector<DropPreview> items);
     void setDropHover(bool hovering);
-    // Send view of Drop Zone: the devices LocalSend found and how the transfer is going.
-    void setSendDevices(std::vector<LocalSendDevice> const& devices);
-    void setSendStatus(LocalSendStatus const& status);
     void setPopupOpen(bool open);
     void showDropZone(bool hold = false);
     std::optional<size_t> dropItemAt(POINT client) const;
@@ -174,7 +169,7 @@ private:
                      appVolume, appMute, focusRhythm, focusSkip, prayerLocationPicker,
                      audioOutputMenu, audioOutputChoice, soundSettings, navHome, homeSettings, homeStartTimer, homeOverlapMode,
                      scratchMode, scratchCopy, scratchClear, taskAdd, taskToggle, taskRemove, taskClearDone,
-                     brightness, prayerResult, prayerSearchField, dropSend, sendDevice, sendBack };
+                     brightness, prayerResult, prayerSearchField };
     using Screen = Feature;
     Settings preferences_;
     std::vector<Screen> screens_{Screen::home, Screen::media, Screen::timers, Screen::scratch, Screen::drop, Screen::system};
@@ -326,7 +321,6 @@ private:
     void drawTasks(float x, float top, bool record);
     void setScratchMode(bool tasks, Clock::time_point now);
     void drawDropZone(D2D1_RECT_F panel, bool record);
-    void drawDropTiles(D2D1_RECT_F panel, bool record);
     void drawCaptureIndicators(D2D1_POINT_2F right, std::array<float, 3> const& amounts);
     void drawCenteredCaptureIndicators(D2D1_RECT_F shape, std::array<float, 3> const& amounts);
     float companionSlotOpacity(Clock::time_point now) const;
@@ -645,21 +639,6 @@ private:
     float dropFieldValue(Clock::time_point now) const;
     int dropWheelRemainder_ = 0;
     D2D1_RECT_F dropViewport_{};
-    // Send view: replaces the tiles with the devices LocalSend found. sendItem_ is the item to send; it
-    // is lost (and the device rows stop sending) if that item leaves Drop Zone while the view is open.
-    bool sendOpen_ = false;
-    std::optional<size_t> sendItem_;
-    std::wstring sendLabel_;
-    bool sendText_ = false;
-    std::vector<LocalSendDevice> sendDevices_;
-    LocalSendStatus sendStatus_;
-    Clock::time_point sendModeStart_{};
-    void openSend(size_t index, Clock::time_point now);
-    void closeSend(Clock::time_point now);
-    void resizeDrop(Clock::time_point now);
-    float sendHeight() const;
-    void drawDropSend(D2D1_RECT_F panel, bool record);
-    void drawDeviceGlyph(LocalSendDevice const& device, D2D1_POINT_2F center, D2D1_COLOR_F color);
     bool panelPinned_ = false;
     bool dotOnly_ = false;
     bool countdownFinished_ = false;

@@ -5,7 +5,6 @@
 #include "browser_tabs.hpp"
 #include "desktop.hpp"
 #include "drop_zone.hpp"
-#include "local_send.hpp"
 #include "island.hpp"
 #include "notifications.hpp"
 #include "resource.h"
@@ -143,7 +142,6 @@ private:
     void logFocus(int minutes);
     bool rollFocusDay();
     DropZone dropZone_;
-    LocalSend localSend_;
     Settings settings_;
     unsigned prayerCity_ = 0;
     unsigned announcedPrayers_ = 0;
@@ -212,13 +210,6 @@ int App::run(HINSTANCE instance, std::optional<SettingsTest> test, Feature featu
         frame();
     }, [this](std::vector<DropPreview> items) {
         island_.setDropItems(std::move(items));
-        frame();
-    });
-    localSend_.attach([this](std::vector<LocalSendDevice> const& devices) {
-        island_.setSendDevices(devices);
-        frame();
-    }, [this](LocalSendStatus const& status) {
-        island_.setSendStatus(status);
         frame();
     });
     desktop_.start(window_);
@@ -644,22 +635,6 @@ void App::run(IslandCommand const& command) {
         break;
     case IslandCommand::Kind::clearDrop: dropZone_.clear(); break;
     case IslandCommand::Kind::removeDrop: dropZone_.remove(command.index); break;
-    case IslandCommand::Kind::openDropSend:
-        // Each send view starts from a fresh list, so devices that left don't linger.
-        localSend_.stopScan();
-        localSend_.scan();
-        break;
-    case IslandCommand::Kind::sendDrop:
-        if (const auto content = dropZone_.content(command.index)) {
-            if (content->path.empty()) localSend_.sendText(command.appId, content->text);
-            else localSend_.sendFile(command.appId, content->path);
-        }
-        break;
-    case IslandCommand::Kind::cancelDropSend: localSend_.cancel(); break;
-    case IslandCommand::Kind::closeDropSend:
-        localSend_.cancel();
-        localSend_.stopScan();
-        break;
     case IslandCommand::Kind::openDropImage:
         if (dropZone_.openImage(command.index, window_)) island_.setPopupOpen(true);
         break;
@@ -1474,8 +1449,6 @@ LRESULT App::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         cancelPrayerRequest();
         spectrum_.select({});
         dropZone_.detach();
-        localSend_.cancel();
-        localSend_.stopScan();
         scratchpad_.close();
         KillTimer(window_, powerTimer);
         KillTimer(window_, frameTimer);
