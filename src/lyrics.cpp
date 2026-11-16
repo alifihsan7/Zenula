@@ -18,7 +18,9 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 namespace zenith {
 namespace {
@@ -167,6 +169,101 @@ std::wstring cleanMetadata(std::wstring_view value, bool artist = false) {
         }
     }
     return result;
+}
+
+std::wstring lowered(std::wstring_view value) {
+    std::wstring result(value);
+    for (auto& ch : result) ch = static_cast<wchar_t>(std::towlower(ch));
+    return result;
+}
+
+// A title for matching: "Song (feat. X)", "Song - Remastered 2011" and "Song [Remastered]" all read as "Song".
+std::wstring titleKey(std::wstring_view title) {
+    auto result = cleanMetadata(title);
+    for (size_t open = result.find_first_of(L"(["); open != std::wstring::npos; open = result.find_first_of(L"([", open)) {
+        const auto close = result.find(result[open] == L'(' ? L')' : L']', open);
+        if (close == std::wstring::npos) break;
+        const auto inner = lowered(std::wstring_view(result).substr(open + 1, close - open - 1));
+        if (inner.starts_with(L"feat") || inner.starts_with(L"ft.") || inner.starts_with(L"with ") ||
+            inner.find(L"remaster") != std::wstring::npos) {
+            const size_t from = open > 0 && result[open - 1] == L' ' ? open - 1 : open;
+            result.erase(from, close + 1 - from);
+            open = from;
+        } else {
+            open = close + 1;
+        }
+    }
+    const auto lower = lowered(result);
+    for (const std::wstring_view marker : {L" feat. ", L" ft. ", L" featuring "}) {
+        if (const auto at = lower.find(marker); at != std::wstring::npos && at > 0) result.resize(std::min(result.size(), at));
+    }
+    if (const auto dash = result.rfind(L" - "); dash != std::wstring::npos && dash > 0 &&
+        lowered(std::wstring_view(result).substr(dash)).find(L"remaster") != std::wstring::npos) {
+        result.resize(dash);
+    }
+    while (!result.empty() && result.back() == L' ') result.pop_back();
+    return result;
+}
+
+// The names in "A, B & C feat. D", the first one being the main artist.
+std::vector<std::wstring> artistNames(std::wstring_view artist) {
+    const auto text = cleanMetadata(artist, true);
+    const auto lower = lowered(text);
+    constexpr std::wstring_view separators[]{L", ", L" & ", L" feat. ", L" feat ", L" ft. ", L" featuring ", L" x ",
+                                             L"; ", L" / ", L"、"};
+    std::vector<std::wstring> names;
+    for (size_t start = 0; start <= text.size();) {
+        size_t next = std::wstring::npos;
+        size_t skip = 0;
+        for (const auto separator : separators) {
+            if (const auto at = lower.find(separator, start); at < next) {
+                next = at;
+                skip = separator.size();
+            }
+        }
+        const auto name = std::wstring_view(text).substr(start, next == std::wstring::npos ? std::wstring::npos : next - start);
+        if (!name.empty()) names.emplace_back(name);
+        if (next == std::wstring::npos) break;
+        start = next + skip;
+    }
+    return names;
+}
+
+std::wstring mainArtist(std::wstring_view artist) {
+    auto names = artistNames(artist);
+    return names.empty() ? std::wstring{} : std::move(names.front());
+}
+
+bool sameArtist(std::wstring_view first, std::wstring_view second) {
+    const auto ours = artistNames(first);
+    const auto theirs = artistNames(second);
+    if (ours.empty() || theirs.empty()) return false;
+    const auto among = [](std::wstring const& name, std::vector<std::wstring> const& names) {
+        return std::ranges::any_of(names, [&](std::wstring const& other) { return equalText(name, other); });
+    };
+    return among(ours.front(), theirs) || among(theirs.front(), ours);
+}
+
+bool latinLetter(wchar_t ch) {
+    return (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z') ||
+           (ch >= 0xC0 && ch <= 0x24F && ch != 0xD7 && ch != 0xF7) || (ch >= 0x1E00 && ch <= 0x1EFF);
+}
+
+bool otherLetter(wchar_t ch) {
+    return (ch >= 0x370 && ch <= 0x1DFF) || (ch >= 0x3040 && ch <= 0x9FFF) || (ch >= 0xAC00 && ch <= 0xD7AF) ||
+           (ch >= 0xFF66 && ch <= 0xFF9F);
+}
+
+// One name written only in Latin letters and the other with none, as with あいみょん and Aimyon: the
+// same artist can't be told from the letters, so the title, album and length decide.
+bool otherScripts(std::wstring_view first, std::wstring_view second) {
+    const auto latinOnly = [](std::wstring_view text) {
+        return std::ranges::any_of(text, latinLetter) && std::ranges::none_of(text, otherLetter);
+    };
+    const auto withoutLatin = [](std::wstring_view text) {
+        return std::ranges::any_of(text, otherLetter) && std::ranges::none_of(text, latinLetter);
+    };
+    return (latinOnly(first) && withoutLatin(second)) || (withoutLatin(first) && latinOnly(second));
 }
 
 // ---- Romaji for Japanese lyrics -------------------------------------------------------------------
@@ -490,9 +587,12 @@ void findMatchingLyrics(JsonArray const& records, std::wstring_view title, std::
                         std::wstring_view album, unsigned duration, LyricsView& result) {
     struct Match {
         JsonObject record;
+        bool otherArtist;
         double durationGap;
         bool otherAlbum;
     };
+    const auto wantedTitle = titleKey(title);
+    const auto wantedAlbum = cleanMetadata(album);
     std::vector<Match> matches;
     for (const auto& value : records) {
         if (value.ValueType() != JsonValueType::Object) continue;
@@ -500,12 +600,17 @@ void findMatchingLyrics(JsonArray const& records, std::wstring_view title, std::
         const auto length = record.GetNamedValue(L"duration", nullptr);
         if (!length || length.ValueType() != JsonValueType::Number) continue;
         const double gap = std::abs(length.GetNumber() - duration);
-        if (!std::isfinite(gap) || gap > 4 || !equalText(cleanMetadata(field(record, L"trackName")), title) ||
-            !equalText(cleanMetadata(field(record, L"artistName"), true), artist)) continue;
-        matches.push_back({record, gap, !equalText(field(record, L"albumName"), album)});
+        if (!std::isfinite(gap) || gap > 4 || !equalText(titleKey(field(record, L"trackName")), wantedTitle)) continue;
+        const auto recordArtist = field(record, L"artistName");
+        const bool otherAlbum = wantedAlbum.empty() || !equalText(cleanMetadata(field(record, L"albumName")), wantedAlbum);
+        const bool otherArtist = !sameArtist(recordArtist, artist);
+        // Another artist name only counts when it is the same name in another script or the album agrees,
+        // and then the length must agree closely too, so covers and live takes stay out.
+        if (otherArtist && (gap > 2 || (otherAlbum && !otherScripts(mainArtist(recordArtist), mainArtist(artist))))) continue;
+        matches.push_back({record, otherArtist, gap, otherAlbum});
     }
     std::ranges::sort(matches, {}, [](Match const& match) {
-        return std::pair{match.durationGap, match.otherAlbum};
+        return std::tuple{match.otherArtist, match.durationGap, match.otherAlbum};
     });
     for (const auto& match : matches) {
         result.lines = timedLines(field(match.record, L"syncedLyrics"));
@@ -683,23 +788,30 @@ Lyrics::Action Lyrics::lookup(unsigned revision, std::wstring title, std::wstrin
             }
         }
         if (result.status == LyricsStatus::unavailable && result.lines.empty()) {
-            auto searchTitle = cleanMetadata(title);
+            auto searchTitle = titleKey(title);
             const auto searchArtist = cleanMetadata(artist, true);
             const auto artistPrefix = searchArtist + L" - ";
             if (!searchArtist.empty() && searchTitle.size() > artistPrefix.size() &&
                 equalText(std::wstring_view(searchTitle).substr(0, artistPrefix.size()), artistPrefix)) {
                 searchTitle.erase(0, artistPrefix.size());
             }
-            const auto search = co_await getWithRetry(http, Uri(L"https://lrclib.net/api/search?track_name=" +
-                urlEncode(searchTitle) + L"&artist_name=" + urlEncode(searchArtist)));
-            result.status = LyricsStatus::error;
-            if (search.IsSuccessStatusCode()) {
+            // First with the main artist; when that finds no synced lyrics, by the title alone, which
+            // catches the artist written another way, such as in Japanese on Spotify and romanized here.
+            const std::wstring queries[]{
+                L"track_name=" + urlEncode(searchTitle) + L"&artist_name=" + urlEncode(mainArtist(searchArtist)),
+                L"track_name=" + urlEncode(searchTitle)};
+            for (const auto& query : queries) {
+                const auto search = co_await getWithRetry(http, Uri(L"https://lrclib.net/api/search?" + query));
+                if (!search.IsSuccessStatusCode()) {
+                    if (result.plain.empty()) result.status = LyricsStatus::error;
+                    break;
+                }
                 const auto body = co_await search.Content().ReadAsStringAsync();
                 JsonArray records{nullptr};
                 if (body.size() <= 1'048'576 && JsonArray::TryParse(body, records)) {
                     findMatchingLyrics(records, searchTitle, searchArtist, album, duration, result);
-                    result.status = LyricsStatus::unavailable;
                 }
+                if (!result.lines.empty()) break;
             }
         }
     } catch (winrt::hresult_error const&) {
