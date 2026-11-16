@@ -119,7 +119,6 @@ Settings Settings::load() {
         settings.islandSize = choice(3, 1);
         settings.accentMode = choice(5, 0, 4);   // 0 album, 1 Zenula blue, 2 custom, 3 per feature
         settings.compactPause = choice(7, 1, 4);
-        settings.theme = (*value & 512u) ? 1u : 0u;
     }
     if (const auto value = read(notificationsValue)) {
         const auto quiet = *value & 3u;
@@ -179,7 +178,7 @@ bool Settings::saveDisplay() const {
 
 bool Settings::saveIsland() const {
     const DWORD value = (fixedPillMinimum ? 1u : 0u) | (showWaveform ? 2u : 0u) | (showPillLyrics ? 4u : 0u) |
-        (islandSize << 3) | (accentMode << 5) | (compactPause << 7) | (theme == 1 ? 512u : 0u);
+        (islandSize << 3) | (accentMode << 5) | (compactPause << 7);
     return write(islandValue, value);
 }
 

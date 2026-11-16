@@ -236,12 +236,6 @@ h2 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; letter-spacing: -.02em
 .goo .content .gb { opacity: 0; transition: transform .9s var(--spring), opacity .3s; }
 .goo.split .content .gb { opacity: 1; transition-delay: 0s, .25s; }
 .goo .gb .bi { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--ac) 20%, transparent); color: var(--ac); font-size: 12px; }
-.owlw { filter: drop-shadow(0 12px 26px rgba(0,0,0,.6)); transition: transform .4s var(--spring); cursor: pointer; }
-.owlw.hop { animation: hop .7s var(--spring); }
-@keyframes hop { 30% { transform: translateY(-22px) scaleY(1.05); } 60% { transform: translateY(0) scaleY(.92); } }
-#lids { transform-box: fill-box; transform-origin: center; transform: scaleY(0); }
-#lids.blink { animation: lid .22s ease; }
-@keyframes lid { 50% { transform: scaleY(1); } }
 .swatches { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; justify-content: center; }
 .swatches button { all: unset; cursor: pointer; width: 46px; height: 46px; border-radius: 10px; box-shadow: 0 0 0 1px var(--line); transition: transform .2s var(--spring), box-shadow .2s; }
 .swatches button:hover { transform: translateY(-3px) rotate(-3deg); }
@@ -344,19 +338,10 @@ footer a { color: var(--ink); }
   <section id="details">
     <div class="sh rv"><h2>The small things<br>are the point.</h2><p>Zenula reacts to what happens on your PC, then gets out of the way.</p></div>
     <div class="bento">
-      <div class="cell s4 rv" style="--d:0s"><h3>Bubbles</h3><p>Copied text, the charger, Caps Lock and Bluetooth split off the pill as a bubble, then melt back in. Hover to send another.</p>
+      <div class="cell rv" style="--d:0s"><h3>Bubbles</h3><p>Copied text, the charger, Caps Lock and Bluetooth split off the pill as a bubble, then melt back in. Hover to send another.</p>
         <div class="stage" id="bubstage"><div class="goo" id="goo"><div class="shapes"><i class="gp"></i><i class="gb"></i></div>
           <div class="content"><div class="gp"><span class="art" style="width:26px;height:26px"></span>Paper Lanterns<span class="viz" data-n="8"></span></div><div class="gb"><span class="bi" id="bi"></span><b id="bt">Copied</b></div></div></div></div></div>
-      <div class="cell s4 rv" style="--d:.1s" id="owlcell"><h3>The owl</h3><p>Pick the Owl theme and the idle dot becomes a small owl. It blinks when you hover, glances at bubbles, and hops when a timer ends. Click it.</p>
-        <div class="stage"><svg class="owlw" id="owl" width="198" height="96" viewBox="0 0 66 32" role="img" aria-label="The Zenula owl">
-          <g fill="#000"><polygon points="8,12 7,1 18,8"/><polygon points="58,12 59,1 48,8"/><rect x="0" y="5" width="66" height="26" rx="13"/></g>
-          <ellipse cx="33" cy="31" rx="24" ry="5" fill="var(--ac)" opacity=".28"/>
-          <path d="M12 10 Q26 11 33 16 Q40 11 54 10" fill="none" stroke="var(--ac)" stroke-width="1.6" stroke-linecap="round" opacity=".85"/>
-          <g fill="#fff" stroke="#0c1422" stroke-width="1.2"><circle cx="24" cy="18" r="6"/><circle cx="42" cy="18" r="6"/></g>
-          <g fill="#0c1422" id="pupils"><circle cx="24" cy="18" r="2.8"/><circle cx="42" cy="18" r="2.8"/><circle cx="25.2" cy="16.8" r=".9" fill="#fff"/><circle cx="43.2" cy="16.8" r=".9" fill="#fff"/></g>
-          <g id="lids" fill="#000"><rect x="17.5" y="11.5" width="13" height="13" rx="6.5"/><rect x="35.5" y="11.5" width="13" height="13" rx="6.5"/></g>
-          <polygon points="31,23 35,23 33,27" fill="#ffcf8a"/></svg></div></div>
-      <div class="cell s4 rv" style="--d:.2s"><h3>Accents</h3><p>The accent follows the album art. Pick a cover and the whole page follows it.</p>
+      <div class="cell rv" style="--d:.1s"><h3>Accents</h3><p>The accent follows the album art. Pick a cover and the whole page follows it.</p>
         <div class="stage col"><div class="pillprev" id="pillprev"><span class="art" style="width:26px;height:26px"></span>Paper Lanterns<span class="viz" data-n="8"></span></div><div class="swatches" id="sw"></div></div></div>
     </div>
   </section>
@@ -454,7 +439,7 @@ const V = {
     <span class="go">Pause</span>` },
   notes: { w: 372, html: () => `
     <div class="hd"><span class="t">Scratchpad</span><div class="seg" style="width:128px"><span class="on">Notes</span><span>Tasks</span></div></div>
-    <div class="card note">Groceries: oat milk, eggs, coffee beans<br>Call Rina back about the venue<br>Idea: the owl hops when the build passes</div>
+    <div class="card note">Groceries: oat milk, eggs, coffee beans<br>Call Rina back about the venue<br>Idea: a timer chime for tea</div>
     <div class="nfoot"><span class="mu s12">22 words · Saved</span><span class="g"></span><span class="chip">Copy</span><span class="chip">Clear</span></div>` },
   drop: { w: 372, html: () => `
     <div class="hd"><span class="t">Drop Zone</span><span class="mu s12">5 items</span><span class="mu s12" style="margin-left:6px">Clear all</span></div>
@@ -614,22 +599,6 @@ $('#bubstage').closest('.cell').addEventListener('pointerenter', bubble);
 new IntersectionObserver(([e]) => { if (e.isIntersecting) bubble(); }, { threshold: .6 }).observe($('#bubstage'));
 function gooFit() { goo.style.setProperty('--gs', Math.min(1, ($('#bubstage').clientWidth - 20) / 340)); }
 gooFit();
-
-/* owl: pupils follow the pointer, blink now and then, hop on click */
-const pupils = $$('#pupils circle'), owl = $('#owl'), lids = $('#lids'), base = [[24, 18], [42, 18], [25.2, 16.8], [43.2, 16.8]];
-let raf = 0, px = 0, py = 0;
-addEventListener('pointermove', e => { px = e.clientX; py = e.clientY; if (!raf) raf = requestAnimationFrame(look); }, { passive: true });
-function look() {
-  raf = 0; const r = owl.getBoundingClientRect(); if (r.bottom < 0 || r.top > innerHeight) return;
-  pupils.forEach((p, i) => {
-    const [bx, by] = base[i], ex = r.left + base[i % 2][0] * r.width / 66, ey = r.top + 18 * r.height / 32;
-    const a = Math.atan2(py - ey, px - ex), d = Math.min(2.6, Math.hypot(px - ex, py - ey) / 40);
-    p.setAttribute('cx', bx + Math.cos(a) * d); p.setAttribute('cy', by + Math.sin(a) * d);
-  });
-}
-const blink = () => { lids.classList.remove('blink'); void lids.getBBox(); lids.classList.add('blink'); };
-$('#owlcell').addEventListener('pointerenter', blink);
-owl.addEventListener('click', () => { owl.classList.remove('hop'); void owl.getBBox(); owl.classList.add('hop'); });
 
 /* accents: the page follows the cover */
 const COVERS = [

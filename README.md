@@ -4,7 +4,7 @@
 
 # Zenula
 
-A dynamic island for Windows. Zenula sits at the top center of your main display as a small dot (or a little owl), grows into a pill while music or a timer runs, and opens a panel when you hover it. See it in action on the [website](https://alifihsan7.github.io/Zenula/).
+A dynamic island for Windows. Zenula sits at the top center of your main display as a small dot, grows into a pill while music or a timer runs, and opens a panel when you hover it. See it in action on the [website](https://alifihsan7.github.io/Zenula/).
 
 It is one native process (C++20, Win32, Direct2D, C++/WinRT). Nothing animates or polls while the island is idle, so it stays around 15 MB of memory and near zero CPU.
 
@@ -32,8 +32,7 @@ Also:
 - When music and a timer run together, one is the pill and the other a small capsule beside it.
 - Camera, microphone, and screen sharing show as icons.
 - The accent follows the album artwork, Zenula blue, a color you pick, or a color per panel.
-- Two themes: **Classic** idles as a dot, **Owl** as a little owl that blinks, glances at bubbles, and hops when a timer ends.
-- **Dot only** keeps the island small in either theme (the owl becomes a pair of eyes); hovering still opens the panel. Zenula can hide in fullscreen apps and respects Do Not Disturb.
+- **Dot only** keeps the island small; hovering still opens the panel. Zenula can hide in fullscreen apps and respects Do Not Disturb.
 
 Open Settings from the tray, from Home, or with `Zenula.exe --settings`.
 

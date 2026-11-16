@@ -141,14 +141,13 @@ constexpr wchar_t const* featureNames[]{L"Now Playing", L"Timers", L"Scratchpad"
 constexpr wchar_t const* widthChoices[]{L"Fit to title", L"147 px minimum"};
 constexpr wchar_t const* sizeChoices[]{L"Compact", L"Default", L"Large"};
 constexpr wchar_t const* accentChoices[]{L"Album artwork", L"Zenula blue", L"Custom", L"Per feature"};
-constexpr wchar_t const* themeChoices[]{L"Classic", L"Owl"};
 constexpr wchar_t const* pauseChoices[]{L"Now", L"3 s", L"5 s", L"Keep title"};
 constexpr wchar_t const* rhythmChoices[]{L"Pomodoro", L"Deep work", L"Long focus", L"Custom"};
 constexpr wchar_t const* quietChoices[]{L"Off", L"Follow Windows", L"On"};
 constexpr wchar_t const* earlyChoices[]{L"On time", L"5 min", L"10 min", L"15 min"};
 constexpr unsigned earlyMinutes[]{0, 5, 10, 15};
 constexpr int choiceControls[]{IDC_PILL_WIDTH, IDC_ISLAND_SIZE, IDC_ACCENT_MODE, IDC_PAUSE_DELAY,
-    IDC_FOCUS_RHYTHM, IDC_QUIET_MODE, IDC_PRAYER_EARLY, IDC_THEME};
+    IDC_FOCUS_RHYTHM, IDC_QUIET_MODE, IDC_PRAYER_EARLY};
 constexpr int choicesPerRow = 4;
 
 size_t choiceRow(int control) {
@@ -170,7 +169,6 @@ std::span<wchar_t const* const> choices(int id) {
     case IDC_PILL_WIDTH: return widthChoices;
     case IDC_ISLAND_SIZE: return sizeChoices;
     case IDC_ACCENT_MODE: return accentChoices;
-    case IDC_THEME: return themeChoices;
     case IDC_PAUSE_DELAY: return pauseChoices;
     case IDC_FOCUS_RHYTHM: return rhythmChoices;
     default: return {};
@@ -235,7 +233,6 @@ public:
     void rounded(D2D1_RECT_F area, float radius, D2D1_COLOR_F value);
     void outline(D2D1_RECT_F area, float radius, D2D1_COLOR_F value, float width);
     void circle(D2D1_POINT_2F center, float radius, D2D1_COLOR_F value);
-    void polygon(std::span<D2D1_POINT_2F const> points, D2D1_COLOR_F value);
     void text(D2D1_RECT_F area, std::wstring_view value, Font font, D2D1_COLOR_F ink,
               DWRITE_TEXT_ALIGNMENT align = DWRITE_TEXT_ALIGNMENT_LEADING);
     float measure(std::wstring_view value, Font font) const;
@@ -355,19 +352,6 @@ void Canvas::outline(D2D1_RECT_F area, float radius, D2D1_COLOR_F value, float w
 void Canvas::circle(D2D1_POINT_2F center, float radius, D2D1_COLOR_F value) {
     brush_->SetColor(faded(value));
     target_->FillEllipse(D2D1::Ellipse(center, radius, radius), brush_.get());
-}
-
-void Canvas::polygon(std::span<D2D1_POINT_2F const> points, D2D1_COLOR_F value) {
-    if (points.size() < 3) return;
-    winrt::com_ptr<ID2D1PathGeometry> path;
-    winrt::com_ptr<ID2D1GeometrySink> sink;
-    if (FAILED(graphics_->CreatePathGeometry(path.put())) || FAILED(path->Open(sink.put()))) return;
-    sink->BeginFigure(points[0], D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddLines(points.data() + 1, static_cast<UINT32>(points.size() - 1));
-    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    if (FAILED(sink->Close())) return;
-    brush_->SetColor(faded(value));
-    target_->FillGeometry(path.get(), brush_.get());
 }
 
 void Canvas::text(D2D1_RECT_F area, std::wstring_view value, Font font, D2D1_COLOR_F paint, DWRITE_TEXT_ALIGNMENT align) {
@@ -792,7 +776,6 @@ unsigned SettingsWindow::currentChoice(int id) const {
     case IDC_PILL_WIDTH: return settings_.fixedPillMinimum;
     case IDC_ISLAND_SIZE: return settings_.islandSize;
     case IDC_ACCENT_MODE: return settings_.accentMode;
-    case IDC_THEME: return settings_.theme;
     case IDC_PAUSE_DELAY: return settings_.compactPause;
     case IDC_FOCUS_RHYTHM: return settings_.rhythm;
     default: return 0;
@@ -922,13 +905,6 @@ void SettingsWindow::content(Builder& b, View view) const {
     case IDC_SETTINGS_ISLAND: {
         b.heading(L"Island");
         b.preview(part(Draw::button, tryId(SettingsTest::appearance), L"Preview in island"));
-        b.label(L"Theme");
-        b.open();
-        b.row({.title = L"Theme", .detail = settings_.owlTheme()
-                   ? (settings_.dotOnly ? L"A pair of eyes that blink and glance. Dot only keeps the owl small."
-                                        : L"A little owl that blinks, glances at bubbles, and hops when a timer ends.")
-                   : L"A plain dot when nothing is running."}, {choice(IDC_THEME)});
-        b.close();
         b.label(L"Shape");
         b.open();
         b.row({.title = L"Size"}, {choice(IDC_ISLAND_SIZE)});
@@ -1148,7 +1124,6 @@ bool SettingsWindow::commandChoice(int id) {
     case IDC_PILL_WIDTH: updated.fixedPillMinimum = index != 0; break;
     case IDC_ISLAND_SIZE: updated.islandSize = index; break;
     case IDC_ACCENT_MODE: updated.accentMode = index; break;
-    case IDC_THEME: updated.theme = index; break;
     case IDC_PAUSE_DELAY: updated.compactPause = index; break;
     case IDC_FOCUS_RHYTHM: updated.rhythm = index; break;
     }
@@ -1730,42 +1705,8 @@ void SettingsWindow::drawPreview(RECT stage, Clock::time_point now) {
     const float natural = pxf(6 + 22 + 8) + textWidth + pxf(8 + 14 + 12);
     const float width = std::lerp(natural, std::max(natural, pxf(147)), width_.value(now));
     const auto center = D2D1::Point2F((area.left + area.right) / 2, (area.top + area.bottom) / 2 - pxf(4));
-    // The idle look sits beside the pill: the theme's dot or owl, small when Dot only is on.
-    const bool owl = settings_.owlTheme();
-    const bool mini = owl && settings_.dotOnly;
-    const float idleWidth = pxf(!owl ? 12.0f : mini ? 28.0f : 66.0f), idleHeight = pxf(!owl || mini ? 12.0f : 26.0f);
-    const float gap = pxf(18);
-    const float left = center.x - (idleWidth + gap + width) / 2;
-    const auto idle = D2D1::RectF(left, center.y - idleHeight / 2, left + idleWidth, center.y + idleHeight / 2);
-    const auto pill = D2D1::RectF(idle.right + gap, center.y - pxf(16), idle.right + gap + width, center.y + pxf(16));
+    const auto pill = D2D1::RectF(center.x - width / 2, center.y - pxf(16), center.x + width / 2, center.y + pxf(16));
     canvas_.zoom(scale_.value(now), center);
-    const auto idleCenter = D2D1::Point2F((idle.left + idle.right) / 2, center.y);
-    const float unit = idleHeight / 30;   // the owl's 30 unit tall grid
-    if (owl && !mini) {
-        for (const float side : {-1.0f, 1.0f}) {
-            const D2D1_POINT_2F ear[]{{idleCenter.x + 33 * side * unit, idleCenter.y - 6 * unit},
-                                      {idleCenter.x + 32 * side * unit, idleCenter.y - 25 * unit},
-                                      {idleCenter.x + 14 * side * unit, idleCenter.y - 14 * unit}};
-            canvas_.polygon(ear, D2D1::ColorF(0, 0, 0));
-        }
-    }
-    canvas_.rounded(idle, idleHeight / 2, D2D1::ColorF(0, 0, 0));
-    canvas_.outline(idle, idleHeight / 2, color(RGB(29, 30, 33)), pxf(1));
-    if (owl) {
-        const float eyeX = mini ? 13.0f : 11.0f, eyeY = mini ? 0.0f : -2.0f;
-        const float eyeR = mini ? 9.5f : 6.8f, pupilR = mini ? 4.6f : 3.2f;
-        for (const float side : {-1.0f, 1.0f}) {
-            const auto eye = D2D1::Point2F(idleCenter.x + eyeX * side * unit, idleCenter.y + eyeY * unit);
-            canvas_.circle(eye, eyeR * unit, D2D1::ColorF(1, 1, 1));
-            canvas_.circle(eye, pupilR * unit, color(RGB(12, 20, 34)));
-        }
-        if (!mini) {
-            const D2D1_POINT_2F beak[]{{idleCenter.x - 3 * unit, idleCenter.y + 3 * unit},
-                                       {idleCenter.x + 3 * unit, idleCenter.y + 3 * unit},
-                                       {idleCenter.x, idleCenter.y + 8 * unit}};
-            canvas_.polygon(beak, color(RGB(255, 207, 138)));
-        }
-    }
     canvas_.rounded(pill, pxf(16), D2D1::ColorF(0, 0, 0));
     canvas_.outline(pill, pxf(16), color(RGB(29, 30, 33)), pxf(1));
     const auto cover = D2D1::RectF(pill.left + pxf(6), center.y - pxf(11), pill.left + pxf(28), center.y + pxf(11));
