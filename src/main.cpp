@@ -230,7 +230,6 @@ int App::run(HINSTANCE instance, std::optional<SettingsTest> test, Feature featu
     refreshPrayers();
     lyrics_ = std::make_shared<Lyrics>([this] { frame(); });
     island_.setLyrics(lyrics_->view());
-    lyrics_->setRomaji(settings_.japaneseRomaji);
     scratchpad_.load();
     island_.setScratchpad(scratchpad_.view());
     tasks_.load();
@@ -1427,7 +1426,6 @@ LRESULT App::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         return TRUE;
     case settingsChangedMessage:
         settings_ = Settings::load();
-        if (lyrics_) lyrics_->setRomaji(settings_.japaneseRomaji);
         notifications_.refresh(window_, settings_.showAppNotifications);
         refreshMotion();
         island_.setPreferences(settings_);

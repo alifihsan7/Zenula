@@ -661,7 +661,6 @@ private:
     Clock::duration lyricFollowLeft_{};
     D2D1_RECT_F lyricViewport_{};
     std::vector<DWRITE_TEXT_RANGE> lyricRanges_;
-    std::vector<DWRITE_TEXT_RANGE> lyricRomajiRanges_;   // the romaji line under each lyric line (length 0 if none)
     std::ptrdiff_t lyricHoverShown_ = -1;                // the line drawn brighter under the pointer
     std::ptrdiff_t activeLyric_ = -1;
     float activeLyricTop_ = 0;
@@ -671,8 +670,6 @@ private:
     unsigned lyricLayoutRevision_ = 0;
     winrt::com_ptr<IDWriteTextLayout> lyricLayout_;
     winrt::com_ptr<ID2D1SolidColorBrush> lyricActiveInk_;
-    winrt::com_ptr<ID2D1SolidColorBrush> lyricRomajiInk_;
-    winrt::com_ptr<ID2D1SolidColorBrush> lyricRomajiActiveInk_;
     winrt::com_ptr<ID2D1SolidColorBrush> lyricHoverInk_;
     // After a screen change shrinks the panel, its old height still counts as "near" until the
     // pointer enters the new panel, so the pointer left behind on the nav doesn't close it.

@@ -7,7 +7,6 @@ namespace zenith {
 struct LyricLine {
     double seconds;
     std::wstring text;
-    std::wstring romaji;   // Hepburn romaji under a Japanese line; empty for other lines
 };
 
 enum class LyricsStatus { idle, loading, ready, plain, unavailable, error };
@@ -29,15 +28,11 @@ public:
     void retry();
     void adjustDelay(int steps);
     void stop();
-    // The romaji add-on: on downloads the dictionary if it is missing, off deletes it.
-    void setRomaji(bool enabled);
     LyricsView const& view() const { return view_; }
 
 private:
     using Action = winrt::Windows::Foundation::IAsyncAction;
     Action lookup(unsigned revision, std::wstring title, std::wstring artist, std::wstring album, unsigned duration);
-    Action downloadRomaji();
-    Action refreshRomaji();
     void cancel();
 
     std::function<void()> changed_;
@@ -49,8 +44,6 @@ private:
     bool open_ = false;
     bool panelOpen_ = false;
     bool stopped_ = false;
-    bool romaji_ = false;
-    bool downloadingRomaji_ = false;
     Action request_{nullptr};
 };
 

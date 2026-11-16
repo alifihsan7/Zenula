@@ -65,8 +65,7 @@ struct Settings {
     bool hideInFullscreen = true;
     bool dotOnly = false;   // the island stays a dot; hovering still opens it
     bool fixedPillMinimum = false;
-    bool idleOwl = false;
-    bool japaneseRomaji = false;   // the romaji add-on: a dictionary downloaded on demand   // the idle island is the Zenula owl instead of a dot
+    bool idleOwl = false;   // the idle island is the Zenula owl instead of a dot
     unsigned islandSize = 1;
     unsigned accentMode = 0;
     unsigned customAccent = 0x91caff;

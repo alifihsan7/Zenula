@@ -120,7 +120,6 @@ Settings Settings::load() {
         settings.accentMode = choice(5, 0, 4);   // 0 album, 1 Zenula blue, 2 custom, 3 per feature
         settings.compactPause = choice(7, 1, 4);
         settings.idleOwl = (*value & 512u) != 0;
-        settings.japaneseRomaji = (*value & 1024u) != 0;
     }
     if (const auto value = read(notificationsValue)) {
         const auto quiet = *value & 3u;
@@ -180,7 +179,7 @@ bool Settings::saveDisplay() const {
 
 bool Settings::saveIsland() const {
     const DWORD value = (fixedPillMinimum ? 1u : 0u) | (showWaveform ? 2u : 0u) | (showPillLyrics ? 4u : 0u) |
-        (islandSize << 3) | (accentMode << 5) | (compactPause << 7) | (idleOwl ? 512u : 0u) | (japaneseRomaji ? 1024u : 0u);
+        (islandSize << 3) | (accentMode << 5) | (compactPause << 7) | (idleOwl ? 512u : 0u);
     return write(islandValue, value);
 }
 

@@ -38,7 +38,7 @@ Start-Process out\Zenula\Release\Zenula.exe
 ```
 
 - Setelah perubahan kode, matikan Zenula, build `out\Zenula`, lalu jalankan lagi (user minta ini otomatis). Kalau mematikan proses diblokir, build ke folder terpisah (`cmake -S . -B out\Check`) untuk cek warning, lalu minta user restart.
-- Repo ada di `D:\Development\Claude\Zenula` (dipindah 2026-11-15 dari `D:\Development\Ngoding\Zenith\zenith\zenula`). Build directory yang dipakai `out\Zenula`. Rilis terbaru v1.0.0 di GitHub Releases (zip tanpa code signing); kamus romaji di release `romaji-ja-v1`. Kalau menambah file `.cpp`, jalankan `cmake -S . -B out\Zenula` dulu.
+- Repo ada di `D:\Development\Claude\Zenula` (dipindah 2026-11-15 dari `D:\Development\Ngoding\Zenith\zenith\zenula`). Build directory yang dipakai `out\Zenula`. Rilis terbaru v1.0.0 di GitHub Releases (zip tanpa code signing). Kalau menambah file `.cpp`, jalankan `cmake -S . -B out\Zenula` dulu.
 - User belum memasang installer; Zenula jalan langsung dari `out\Zenula\Release\Zenula.exe`.
 - Settings dibuka dengan `[Diagnostics.Process]::Start($exe, '--settings')`. `Start-Process -ArgumentList '--settings'` tidak dikenali.
 - GitHub Actions tidak bisa dipakai (akun terkunci billing). Build dan tes lokal.

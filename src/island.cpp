@@ -4238,18 +4238,10 @@ void Island::prepareLyricLayout(float width) {
 
     std::wstring joined = lyrics_->plain;
     lyricRanges_.clear();
-    lyricRomajiRanges_.clear();
     for (const auto& line : lyrics_->lines) {
         if (!lyricRanges_.empty()) joined += L'\n';
         lyricRanges_.push_back({static_cast<UINT32>(joined.size()), static_cast<UINT32>(line.text.size())});
         joined += line.text;
-        if (line.romaji.empty()) {
-            lyricRomajiRanges_.push_back({static_cast<UINT32>(joined.size()), 0});
-        } else {
-            joined += L'\n';
-            lyricRomajiRanges_.push_back({static_cast<UINT32>(joined.size()), static_cast<UINT32>(line.romaji.size())});
-            joined += line.romaji;
-        }
     }
 
     winrt::com_ptr<IDWriteTextLayout> layout;
@@ -4257,19 +4249,9 @@ void Island::prepareLyricLayout(float width) {
         lyricFont_.get(), width, 1'000'000, layout.put()));
     DWRITE_TEXT_METRICS metrics{};
     winrt::check_hresult(layout->GetMetrics(&metrics));
-    if (!lyricRomajiInk_) {
-        winrt::check_hresult(target_->CreateSolidColorBrush(rgb(0x6f747c), lyricRomajiInk_.put()));
-        winrt::check_hresult(target_->CreateSolidColorBrush(accent_, lyricRomajiActiveInk_.put()));
+    if (!lyricHoverInk_) {
         winrt::check_hresult(target_->CreateSolidColorBrush(mixColor(rgb(mutedColor), rgb(inkColor), 0.55f), lyricHoverInk_.put()));
     }
-    for (const auto range : lyricRomajiRanges_) {
-        if (range.length == 0) continue;
-        winrt::check_hresult(layout->SetFontSize(12.5f, range));
-        winrt::check_hresult(layout->SetFontWeight(DWRITE_FONT_WEIGHT_NORMAL, range));
-        winrt::check_hresult(layout->SetDrawingEffect(lyricRomajiInk_.get(), range));
-    }
-    if (std::ranges::any_of(lyricRomajiRanges_, [](auto range) { return range.length != 0; }))
-        winrt::check_hresult(layout->GetMetrics(&metrics));
     lyricHoverShown_ = -1;
     lyricLayout_ = std::move(layout);
     lyricContentHeight_ = metrics.height;
@@ -4338,9 +4320,6 @@ void Island::drawLyrics(D2D1_RECT_F panel, Clock::time_point now, double positio
         if (activeLyric_ >= 0 && lyricRanges_[activeLyric_].length != 0) {
             winrt::check_hresult(lyricLayout_->SetDrawingEffect(nullptr, lyricRanges_[activeLyric_]));
         }
-        if (activeLyric_ >= 0 && lyricRomajiRanges_[activeLyric_].length != 0) {
-            winrt::check_hresult(lyricLayout_->SetDrawingEffect(lyricRomajiInk_.get(), lyricRomajiRanges_[activeLyric_]));
-        }
         if (lyricHoverShown_ == active) lyricHoverShown_ = -1;   // the active line wins over hover
         activeLyric_ = active;
         activeLyricTop_ = activeLyricHeight_ = 0;
@@ -4348,9 +4327,6 @@ void Island::drawLyrics(D2D1_RECT_F panel, Clock::time_point now, double positio
             const auto range = lyricRanges_[active];
             if (range.length != 0) {
                 winrt::check_hresult(lyricLayout_->SetDrawingEffect(lyricActiveInk_.get(), range));
-            }
-            if (lyricRomajiRanges_[active].length != 0) {
-                winrt::check_hresult(lyricLayout_->SetDrawingEffect(lyricRomajiActiveInk_.get(), lyricRomajiRanges_[active]));
             }
             DWRITE_HIT_TEST_METRICS hit{};
             float left = 0;
@@ -4382,14 +4358,11 @@ void Island::drawLyrics(D2D1_RECT_F panel, Clock::time_point now, double positio
             winrt::check_hresult(lyricLayout_->SetDrawingEffect(lyricHoverInk_.get(), lyricRanges_[hover]));
         lyricHoverShown_ = hover;
     }
-    if (lyricRomajiActiveInk_) lyricRomajiActiveInk_->SetColor(accent_);   // the active romaji follows the accent
     target_->PushAxisAlignedClip(lyricViewport_, D2D1_ANTIALIAS_MODE_ALIASED);
     if (hover >= 0) {
         if (const float level = hoverLevel(Hit::lyricLine, static_cast<size_t>(hover)); level > 0) {
-            // The backdrop spans the line and its romaji.
             const auto first = lyricRanges_[hover].startPosition;
-            const auto romaji = lyricRomajiRanges_[hover];
-            const auto last = romaji.length ? romaji.startPosition + romaji.length : first + lyricRanges_[hover].length;
+            const auto last = first + lyricRanges_[hover].length;
             UINT32 count = 0;
             lyricLayout_->HitTestTextRange(first, last - first, 0, 0, nullptr, 0, &count);
             std::vector<DWRITE_HIT_TEST_METRICS> parts(count);

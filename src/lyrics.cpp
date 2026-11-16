@@ -2,7 +2,6 @@
 
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.Collections.h>
-#include <winrt/Windows.Globalization.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Web.h>
 #include <winrt/Windows.Web.Http.Filters.h>
@@ -13,8 +12,6 @@
 #include <cmath>
 #include <cwchar>
 #include <cwctype>
-#include <filesystem>
-#include <fstream>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -266,277 +263,6 @@ bool otherScripts(std::wstring_view first, std::wstring_view second) {
     return (latinOnly(first) && withoutLatin(second)) || (withoutLatin(first) && latinOnly(second));
 }
 
-// ---- Romaji for Japanese lyrics -------------------------------------------------------------------
-// Windows' Japanese analyzer gives each word's reading in kana; the readings become Hepburn romaji.
-
-bool isKana(wchar_t ch) { return (ch >= 0x3040 && ch <= 0x309F) || (ch >= 0x30A0 && ch <= 0x30FF); }
-bool isKanji(wchar_t ch) { return ch >= 0x4E00 && ch <= 0x9FFF; }
-
-std::wstring kanaRomaji(std::wstring_view kana) {
-    static const std::pair<wchar_t, std::wstring_view> table[]{
-        {L'あ', L"a"}, {L'い', L"i"}, {L'う', L"u"}, {L'え', L"e"}, {L'お', L"o"},
-        {L'か', L"ka"}, {L'き', L"ki"}, {L'く', L"ku"}, {L'け', L"ke"}, {L'こ', L"ko"},
-        {L'が', L"ga"}, {L'ぎ', L"gi"}, {L'ぐ', L"gu"}, {L'げ', L"ge"}, {L'ご', L"go"},
-        {L'さ', L"sa"}, {L'し', L"shi"}, {L'す', L"su"}, {L'せ', L"se"}, {L'そ', L"so"},
-        {L'ざ', L"za"}, {L'じ', L"ji"}, {L'ず', L"zu"}, {L'ぜ', L"ze"}, {L'ぞ', L"zo"},
-        {L'た', L"ta"}, {L'ち', L"chi"}, {L'つ', L"tsu"}, {L'て', L"te"}, {L'と', L"to"},
-        {L'だ', L"da"}, {L'ぢ', L"ji"}, {L'づ', L"zu"}, {L'で', L"de"}, {L'ど', L"do"},
-        {L'な', L"na"}, {L'に', L"ni"}, {L'ぬ', L"nu"}, {L'ね', L"ne"}, {L'の', L"no"},
-        {L'は', L"ha"}, {L'ひ', L"hi"}, {L'ふ', L"fu"}, {L'へ', L"he"}, {L'ほ', L"ho"},
-        {L'ば', L"ba"}, {L'び', L"bi"}, {L'ぶ', L"bu"}, {L'べ', L"be"}, {L'ぼ', L"bo"},
-        {L'ぱ', L"pa"}, {L'ぴ', L"pi"}, {L'ぷ', L"pu"}, {L'ぺ', L"pe"}, {L'ぽ', L"po"},
-        {L'ま', L"ma"}, {L'み', L"mi"}, {L'む', L"mu"}, {L'め', L"me"}, {L'も', L"mo"},
-        {L'や', L"ya"}, {L'ゆ', L"yu"}, {L'よ', L"yo"},
-        {L'ら', L"ra"}, {L'り', L"ri"}, {L'る', L"ru"}, {L'れ', L"re"}, {L'ろ', L"ro"},
-        {L'わ', L"wa"}, {L'ゐ', L"i"}, {L'ゑ', L"e"}, {L'を', L"o"}, {L'ん', L"n"}, {L'ゔ', L"vu"},
-        {L'ぁ', L"a"}, {L'ぃ', L"i"}, {L'ぅ', L"u"}, {L'ぇ', L"e"}, {L'ぉ', L"o"},
-        {L'ゃ', L"ya"}, {L'ゅ', L"yu"}, {L'ょ', L"yo"}, {L'ゎ', L"wa"},
-    };
-    const auto lookup = [](wchar_t ch) -> std::wstring_view {
-        for (const auto& [kana, romaji] : table) if (kana == ch) return romaji;
-        return {};
-    };
-    std::wstring out;
-    bool doubleNext = false;
-    for (size_t i = 0; i < kana.size(); ++i) {
-        wchar_t ch = kana[i];
-        if (ch >= 0x30A1 && ch <= 0x30F6) ch = static_cast<wchar_t>(ch - 0x60);   // katakana to hiragana
-        if (ch == L'っ' || ch == L'ッ') { doubleNext = true; continue; }
-        if (ch == L'ー') {
-            if (!out.empty()) out += out.back();
-            continue;
-        }
-        auto syllable = std::wstring(lookup(ch));
-        if (syllable.empty()) { out += ch; doubleNext = false; continue; }
-        // A small ya/yu/yo or small vowel joins the syllable before it: ki + ya = kya, shi + ya = sha, fu + a = fa.
-        if (i + 1 < kana.size()) {
-            wchar_t next = kana[i + 1];
-            if (next >= 0x30A1 && next <= 0x30F6) next = static_cast<wchar_t>(next - 0x60);
-            if (next == L'ゃ' || next == L'ゅ' || next == L'ょ') {
-                const auto tail = lookup(next);
-                const bool palatal = syllable == L"shi" || syllable == L"chi" || syllable == L"ji";
-                syllable = palatal ? syllable.substr(0, syllable.size() - 1) + std::wstring(tail.substr(1))
-                                   : syllable.substr(0, syllable.size() - 1) + std::wstring(tail);
-                ++i;
-            } else if (next == L'ぁ' || next == L'ぃ' || next == L'ぅ' || next == L'ぇ' || next == L'ぉ') {
-                syllable = syllable.substr(0, syllable.size() - 1) + std::wstring(lookup(next));
-                ++i;
-            }
-        }
-        if (doubleNext) {
-            out += syllable.starts_with(L"ch") ? L't' : syllable.front();
-            doubleNext = false;
-        }
-        out += syllable;
-    }
-    return out;
-}
-
-std::wstring romajiFor(std::wstring const& line) {
-    using winrt::Windows::Globalization::JapanesePhoneticAnalyzer;
-    static constexpr std::wstring_view particles[]{L"は", L"が", L"を", L"に", L"へ", L"で", L"と", L"の", L"も", L"や",
-                                                    L"から", L"まで", L"より", L"ね", L"よ", L"か", L"な"};
-    std::wstring out;
-    // The analyzer reads at most 100 characters at a time.
-    for (size_t start = 0; start < line.size(); start += 100) {
-        const auto words = JapanesePhoneticAnalyzer::GetWords(winrt::hstring(std::wstring_view(line).substr(start, 100)));
-        for (const auto& word : words) {
-            const std::wstring display{word.DisplayText()};
-            const std::wstring yomi{word.YomiText()};
-            const bool particle = std::ranges::find(particles, std::wstring_view(display)) != std::end(particles);
-            std::wstring piece;
-            if (display == L"は" && particle) piece = L"wa";
-            else if (display == L"へ" && particle) piece = L"e";
-            else if (display == L"を") piece = L"o";
-            else piece = kanaRomaji(yomi.empty() ? display : yomi);
-            const bool spaced = !out.empty() && out.back() != L' ' && (word.IsPhraseStart() || particle) &&
-                                !piece.empty() && iswalnum(piece.front());
-            if (spaced) out += L' ';
-            out += piece;
-        }
-    }
-    return out;
-}
-
-// ---- The romaji add-on: a sorted "word<TAB>reading" list built from JMdict (tools/build_romaji_dict.py).
-
-constexpr wchar_t romajiAddonUrl[] = L"https://github.com/alifihsan7/Zenula/releases/download/romaji-ja-v1/romaji-ja.tsv";
-constexpr char romajiAddonHeader[] = "# Zenula romaji dictionary";
-
-std::filesystem::path romajiAddonPath() {
-    wchar_t folder[MAX_PATH]{};
-    const auto length = GetEnvironmentVariableW(L"LOCALAPPDATA", folder, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH) return {};
-    return std::filesystem::path(folder) / L"Zenith Dot" / L"addons" / L"romaji-ja.tsv";
-}
-
-std::string utf8(std::wstring_view text) { return winrt::to_string(text); }
-
-// Loaded for one song and dropped after, so the dictionary costs no memory between songs.
-class RomajiDictionary {
-public:
-    bool load(std::filesystem::path const& path) {
-        std::ifstream input(path, std::ios::binary | std::ios::ate);
-        const auto size = input.tellg();
-        if (size <= 0 || size > 40'000'000) return false;
-        data_.resize(static_cast<size_t>(size));
-        if (!input.seekg(0).read(data_.data(), size) || !data_.starts_with(romajiAddonHeader)) return false;
-        for (size_t start = 0; start < data_.size();) {
-            const auto end = data_.find('\n', start);
-            const std::string_view line(data_.data() + start, (end == std::string::npos ? data_.size() : end) - start);
-            start = end == std::string::npos ? data_.size() : end + 1;
-            const auto tab = line.find('\t');
-            if (line.empty() || line.front() == '#' || tab == std::string_view::npos) continue;
-            entries_.push_back({line.substr(0, tab), line.substr(tab + 1)});
-        }
-        return !entries_.empty();
-    }
-    std::optional<std::string_view> find(std::string_view word) const {
-        const auto found = std::ranges::lower_bound(entries_, word, {}, &Entry::word);
-        if (found == entries_.end() || found->word != word) return std::nullopt;
-        return found->reading;
-    }
-
-private:
-    struct Entry {
-        std::string_view word;
-        std::string_view reading;
-    };
-    std::string data_;
-    std::vector<Entry> entries_;
-};
-
-std::wstring particleRomaji(std::wstring_view kana) {
-    if (kana == L"は") return L"wa";
-    if (kana == L"へ") return L"e";
-    if (kana == L"を") return L"o";
-    return kanaRomaji(kana);
-}
-
-// Particles, longest first. Case particles split a run whenever a word came before them; the
-// sentence-final ones only at the end of a run of kana.
-constexpr std::wstring_view longParticles[]{L"から", L"まで", L"より", L"だけ", L"でも", L"しか", L"けど", L"ので", L"のに", L"って"};
-constexpr std::wstring_view caseParticles[]{L"は", L"が", L"を", L"に", L"へ", L"で", L"と", L"の", L"も", L"や"};
-constexpr std::wstring_view finalParticles[]{L"ね", L"よ", L"か", L"な", L"さ"};
-
-// Splits a line into words: kanji words by the longest match in the dictionary, verb endings stay
-// on their verb, common kana words come from the dictionary too, and particles stand alone
-// (ima wa mada tsutaerarenai kedo). Japanese punctuation becomes its Latin twin on the word before.
-std::wstring dictionaryRomaji(std::wstring_view line, RomajiDictionary const* dictionary) {
-    struct Word {
-        std::wstring text;
-        bool open = false;   // a verb or adjective form: the kana after it are its ending
-    };
-    std::vector<Word> words;
-    const auto longest = [&](size_t at, size_t from, size_t to) -> std::pair<size_t, std::optional<std::string_view>> {
-        if (!dictionary) return {0, std::nullopt};
-        for (size_t length = std::min(from, line.size() - at); length >= to; --length) {
-            if (const auto reading = dictionary->find(utf8(line.substr(at, length)))) return {length, reading};
-            if (length == to) break;
-        }
-        return {0, std::nullopt};
-    };
-    const auto particleAt = [&](size_t at) -> size_t {
-        const auto rest = line.substr(at);
-        for (const auto particle : longParticles) if (rest.starts_with(particle)) return particle.size();
-        if (!words.empty()) for (const auto particle : caseParticles) if (rest.starts_with(particle)) return 1;
-        for (const auto particle : finalParticles) {
-            if (rest.starts_with(particle) && (rest.size() == 1 || !isKana(rest[1]))) return 1;
-        }
-        return 0;
-    };
-    for (size_t i = 0; i < line.size();) {
-        const wchar_t ch = line[i];
-        if (isKanji(ch) || ch == L'々') {
-            const auto [length, reading] = longest(i, 12, 1);
-            if (!reading) return {};   // an unknown kanji: no romaji rather than a half-read line
-            const bool open = isKana(line[i + length - 1]);
-            words.push_back({kanaRomaji(winrt::to_hstring(*reading)), open});
-            i += length;
-        } else if (isKana(ch)) {
-            if (!words.empty() && words.back().open) {
-                // The ending of a verb or adjective runs until a long particle or the end of the kana.
-                size_t to = i;
-                while (to < line.size() && isKana(line[to])) {
-                    const auto rest = line.substr(to);
-                    if (to > i && std::ranges::any_of(longParticles, [&](auto p) { return rest.starts_with(p); })) break;
-                    ++to;
-                }
-                words.back().text += kanaRomaji(line.substr(i, to - i));
-                words.back().open = false;
-                i = to;
-            } else if (const size_t particle = particleAt(i)) {
-                words.push_back({particleRomaji(line.substr(i, particle))});
-                i += particle;
-            } else if (const auto [length, reading] = longest(i, 8, 2); reading) {
-                words.push_back({kanaRomaji(winrt::to_hstring(*reading))});
-                i += length;
-            } else {
-                // A kana the dictionary does not start a word with: it belongs to the word before.
-                const auto read = kanaRomaji(line.substr(i, 1));
-                if (!words.empty()) words.back().text += read;
-                else words.push_back({read});
-                ++i;
-            }
-        } else {
-            static constexpr std::pair<wchar_t, wchar_t> marks[]{{L'、', L','}, {L'。', L'.'}, {L'！', L'!'}, {L'？', L'?'},
-                                                                  {L'，', L','}, {L'．', L'.'}, {L'～', L'~'}};
-            if (const auto mark = std::ranges::find(marks, ch, &std::pair<wchar_t, wchar_t>::first); mark != std::end(marks)) {
-                if (!words.empty()) words.back().text += mark->second;
-                ++i;
-                continue;
-            }
-            size_t to = i;
-            while (to < line.size() && !isKana(line[to]) && !isKanji(line[to]) &&
-                   std::ranges::find(marks, line[to], &std::pair<wchar_t, wchar_t>::first) == std::end(marks)) ++to;
-            std::wstring other(line.substr(i, to - i));
-            std::erase_if(other, [](wchar_t c) { return c == L'　' || c == L'「' || c == L'」' || c == L'・'; });
-            const auto first = other.find_first_not_of(L' ');
-            if (first != std::wstring::npos) words.push_back({other.substr(first, other.find_last_not_of(L' ') - first + 1)});
-            i = to;
-        }
-    }
-    std::wstring out;
-    for (const auto& word : words) {
-        if (word.text.empty()) continue;
-        if (!out.empty()) out += L' ';
-        out += word.text;
-    }
-    return out;
-}
-
-bool imeReadsJapanese() {
-    try {
-        return winrt::Windows::Globalization::JapanesePhoneticAnalyzer::GetWords(L"日本").Size() > 0;
-    } catch (winrt::hresult_error const&) {
-        return false;
-    }
-}
-
-// Adds romaji to lyrics that are Japanese: any kana in the song, then every line with kana or kanji.
-// The Windows Japanese keyboard reads best; without it the add-on dictionary does, and kana-only lines
-// need neither.
-void addRomaji(std::vector<LyricLine>& lines, bool addon) {
-    const bool japanese = std::ranges::any_of(lines, [](LyricLine const& line) {
-        return std::ranges::any_of(line.text, isKana);
-    });
-    if (!japanese) return;
-    const bool ime = imeReadsJapanese();
-    std::optional<RomajiDictionary> dictionary;
-    if (!ime && addon) {
-        dictionary.emplace();
-        if (!dictionary->load(romajiAddonPath())) dictionary.reset();
-    }
-    for (auto& line : lines) {
-        if (!std::ranges::any_of(line.text, [](wchar_t ch) { return isKana(ch) || isKanji(ch); })) continue;
-        try {
-            line.romaji = ime ? romajiFor(line.text) : dictionaryRomaji(line.text, dictionary ? &*dictionary : nullptr);
-        } catch (winrt::hresult_error const&) {
-            line.romaji.clear();
-        }
-    }
-}
-
 std::vector<LyricLine> timedLines(std::wstring_view lrc) {
     constexpr size_t maxLines = 4096;
     constexpr size_t textLimit = 131'072;
@@ -636,68 +362,6 @@ void Lyrics::cancel() {
     request_ = nullptr;
 }
 
-void Lyrics::setRomaji(bool enabled) {
-    romaji_ = enabled;
-    const auto path = romajiAddonPath();
-    if (path.empty()) return;
-    std::error_code error;
-    if (!enabled) {
-        std::filesystem::remove(path, error);
-        return;
-    }
-    if (!std::filesystem::exists(path, error) && !downloadingRomaji_) downloadRomaji();
-}
-
-Lyrics::Action Lyrics::downloadRomaji() {
-    const auto lifetime = shared_from_this();
-    downloadingRomaji_ = true;
-    const winrt::apartment_context ui;
-    co_await winrt::resume_background();
-    bool saved = false;
-    try {
-        const HttpClient http;   // GitHub release downloads redirect to their storage host
-        const auto response = co_await http.GetAsync(Uri(romajiAddonUrl));
-        if (response.IsSuccessStatusCode()) {
-            const auto buffer = co_await response.Content().ReadAsBufferAsync();
-            const std::string_view bytes(reinterpret_cast<char const*>(buffer.data()), buffer.Length());
-            if (bytes.size() < 40'000'000 && bytes.starts_with(romajiAddonHeader)) {
-                const auto path = romajiAddonPath();
-                std::error_code error;
-                std::filesystem::create_directories(path.parent_path(), error);
-                auto pending = path;
-                pending += L".tmp";
-                {
-                    std::ofstream output(pending, std::ios::binary | std::ios::trunc);
-                    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-                }
-                std::filesystem::rename(pending, path, error);
-                saved = !error;
-            }
-        }
-    } catch (winrt::hresult_error const&) {
-        OutputDebugStringW(L"Zenula could not download the romaji dictionary.\n");
-    }
-    co_await ui;
-    downloadingRomaji_ = false;
-    if (saved && !stopped_ && romaji_) refreshRomaji();
-}
-
-// Gives the lyrics already on screen their romaji once the dictionary arrives.
-Lyrics::Action Lyrics::refreshRomaji() {
-    const auto lifetime = shared_from_this();
-    if (view_.status != LyricsStatus::ready) co_return;
-    const auto revision = view_.revision;
-    auto lines = view_.lines;
-    const winrt::apartment_context ui;
-    co_await winrt::resume_background();
-    addRomaji(lines, true);
-    co_await ui;
-    if (stopped_ || view_.revision != revision) co_return;
-    view_.lines = std::move(lines);
-    ++view_.revision;
-    if (changed_) changed_();
-}
-
 void Lyrics::stop() {
     stopped_ = true;
     changed_ = {};
@@ -771,7 +435,6 @@ Lyrics::Action Lyrics::lookup(unsigned revision, std::wstring title, std::wstrin
     cancellation.enable_propagation();
     const winrt::apartment_context ui;
     co_await winrt::resume_background();
-    const bool romajiAddon = romaji_;
     LyricsView result;
     result.status = LyricsStatus::error;
     try {
@@ -824,7 +487,6 @@ Lyrics::Action Lyrics::lookup(unsigned revision, std::wstring title, std::wstrin
     } catch (winrt::hresult_error const&) {
         result.status = LyricsStatus::error;
     }
-    addRomaji(result.lines, romajiAddon);   // still on the background thread
     co_await ui;
     if (stopped_ || revision != revision_) co_return;
     if (!result.lines.empty()) {
