@@ -38,6 +38,8 @@ constexpr float owlScale = owlHeight / 30;
 constexpr auto owlBlinkTime = 140ms;
 constexpr auto owlHappyTime = 1600ms;
 constexpr auto owlHopTime = 520ms;
+constexpr auto owlGlanceHold = 600ms;     // the owl watches where the pointer went, then looks ahead again
+constexpr auto owlGlanceReturn = 300ms;
 
 // A small hop and a smaller rebound, in grid units (negative is up).
 float owlHop(float t) {
@@ -1442,6 +1444,7 @@ bool Island::moving(Clock::time_point now) const {
            now - prayerSlide_.start < segmentSlideTime ||
            now - taskProgress_.start < moveMotion || now - owlBlinkStart_ < owlBlinkTime ||
            (now >= owlHappyStart_ && now - owlHappyStart_ < owlHappyTime) ||
+           now - owlGlanceStart_ < owlGlanceHold + owlGlanceReturn ||
            now - sourceMenuMotion_.start < menuRevealTime || now - audioMenuMotion_.start < menuRevealTime ||
            now - appMotion_.start < rowMotionTime || now - bluetoothMotion_.start < rowMotionTime ||
            now - brightnessStart_ < brightnessTime || now - prayerModeStart_ < scratchFadeTime || now - pillStart_ < shapeTime || now - panelStart_ < shapeTime || now - navStart_ < navRevealTime || now - navSelectionStart_ < navSelectionTime ||
@@ -1865,6 +1868,12 @@ void Island::setOpen(bool open, Clock::time_point now) {
                   pillTitleVisible_ && pillTrackSize_.height <= pillHeight &&
                   pillAmount(now) >= 1 && pillContent_ == PillMode::media &&
                   !pillLyric_.layout && !previousPillLyric_.layout;
+    if (!open && preferences_.idleOwl && animate_) {
+        // As the panel closes the owl looks to where the pointer left, then ahead again.
+        owlGlance_ = {std::clamp(lastPointer_.x / 140, -1.0f, 1.0f) * 2.4f,
+                      std::clamp((lastPointer_.y - pillCenterY) / 90, -1.0f, 1.0f) * 1.8f};
+        owlGlanceStart_ = now + shapeTime * 3 / 5;
+    }
     open_ = open;
     if (!open) setNavExpanded(false, now);
     sourcePickerOpen_ = false;
@@ -2042,7 +2051,7 @@ void Island::completeCountdown(Clock::time_point now, PillMode mode, IslandAlert
     if (!suppressed_ && !open_ && !dotOnly_ && pillMode_ == mode && alertAllowed(alert.kind)) {
         const auto reveal = animate_ ? countdownCompletionMotion : 0ms;
         countdownCompletion_ = {now, now + reveal + alertHoldTime(alert), mode, std::move(alert.title)};
-        owlHappyStart_ = countdownCompletion_.until;
+        owlHappyStart_ = countdownCompletion_.until + shapeTime * 4 / 5;   // once the pill is the owl again
         return;
     }
     if (alert.fromCompanion) {
@@ -2275,6 +2284,7 @@ float Island::volumeFraction(D2D1_POINT_2F point) const {
 
 bool Island::pointerMove(POINT client) {
     const auto point = stagePoint(client);
+    lastPointer_ = point;
     if (pressed_ == Hit::timerDuration) {
         const int steps = static_cast<int>((timerDragY_ - point.y) / timerDragStep);
         if (steps == 0) return false;
@@ -3364,7 +3374,14 @@ void Island::drawOwlFace(D2D1_POINT_2F center, float scale, float opacity, bool 
     const bool sleeping = focusQuiet() || alertsQuiet();
     const bool happy = animate_ && now >= owlHappyStart_ && now - owlHappyStart_ < owlHappyTime;
     D2D1_POINT_2F look = owlLook_;
-    if (bubbleShowing()) look.x += 1.8f;
+    if (bubbleShowing()) look.x += 2.4f * clamp01(alertValue(now));   // toward the bubble on its right
+    if (animate_ && now - owlGlanceStart_ < owlGlanceHold + owlGlanceReturn) {
+        const float left = 1 - easeInOut(progress(owlGlanceStart_ + owlGlanceHold, owlGlanceReturn, now));
+        look.x += owlGlance_.x * left;
+        look.y += owlGlance_.y * left;
+    }
+    look.x = std::clamp(look.x, -2.4f, 2.4f);
+    look.y = std::clamp(look.y, -1.8f, 1.8f);
     if (glow) {
         // A soft accent glow along the bottom edge; dimmer while asleep.
         const D2D1_GRADIENT_STOP stops[]{{0, withAlpha(accent_, (sleeping ? 0.12f : 0.3f) * opacity)}, {1, withAlpha(accent_, 0)}};
@@ -5847,6 +5864,7 @@ void Island::startAlert(IslandAlert alert, Clock::time_point now, bool update) {
     alertVelocity_ = 0;
     alertTo_ = 1;
     alertStart_ = closing ? std::max(now, panelStart_ + shapeTime) : now;
+    if (preferences_.idleOwl && animate_) owlBlinkStart_ = alertStart_;   // the owl notices
 }
 
 void Island::beginAlertClose(Clock::time_point now) {
@@ -6002,12 +6020,15 @@ void Island::drawSplit(Clock::time_point now, float amount, std::optional<D2D1_R
     float alertOpacity = 0;
     float copyOpacity = 0;
     const bool fromPill = amount >= 1;
+    // The idle owl stays and the bubble splits off beside it, the way it does from a pill.
+    const bool fromOwl = !fromPill && !slot && preferences_.idleOwl;
+    const bool liquid = fromPill || fromOwl;
     const auto source = slot.value_or(compactShape(now, amount));
     const auto size = D2D1::SizeF(source.right - source.left, source.bottom - source.top);
-    const float scale = fromPill ? size.height / pillHeight : 1;
+    const float scale = liquid ? size.height / pillHeight : 1;
     const float shiftX = slot ? slot->left : 0;
-    const float top = slot ? slot->top : pillTop;
-    if (fromPill) {
+    const float top = slot ? slot->top : fromOwl ? source.top : pillTop;
+    if (liquid) {
         const auto frame = makeLiquidSplit(shape, size.width / scale, target / scale, p, slot.has_value());
         left = frame.left;
         area = frame.bubble;
@@ -6040,16 +6061,23 @@ void Island::drawSplit(Clock::time_point now, float amount, std::optional<D2D1_R
                                                  slot->right + releaseGap * scale + std::max(target, size.height) + 2,
                                                  slot->bottom + 1), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     }
+    const auto primary = box(shiftX + left * scale, top, size.width, size.height);
+    const auto owlCenter = pt((primary.left + primary.right) / 2, (primary.top + primary.bottom) / 2);
+    if (fromOwl) drawOwlEars(owlCenter, owlScale, 1);
     fillShell(visible);
     if (!drawsWholePill) target_->PopAxisAlignedClip();
 
-    if (fromPill && drawsWholePill) {
-        const auto capsule = box(shiftX + left * scale, top, size.width, size.height);
+    if (liquid && drawsWholePill) {
         winrt::com_ptr<ID2D1RoundedRectangleGeometry> clip;
         winrt::check_hresult(graphics_->CreateRoundedRectangleGeometry(
-            rounded(capsule, size.height / 2), clip.put()));
+            rounded(primary, size.height / 2), clip.put()));
         pushLayer(clip.get(), 1);
-        drawCompactContent(now, capsule, false);
+        if (fromOwl) {
+            target_->FillRectangle(primary, ink(D2D1::ColorF(0, 0, 0)));
+            drawOwlFace(owlCenter, owlScale, 1, true, now);
+        } else {
+            drawCompactContent(now, primary, false);
+        }
         popLayer();
     }
     drawAlertContent(area, alertOpacity, copyOpacity);
@@ -6291,10 +6319,11 @@ void Island::draw(HWND window) {
         bounds = unite(bounds, grow(fullBubble, gap + 2, 2));
     } else if (splitVisible) {
         const bool fromPill = splitAmount >= 1;
-        const float height = fromPill ? compact.bottom - compact.top : activityDotSize;
+        const bool liquid = fromPill || preferences_.idleOwl;   // the owl keeps its place beside the bubble
+        const float height = liquid ? compact.bottom - compact.top : activityDotSize;
         const float bubble = std::max(alertWidth_, height);
-        const float gap = fromPill ? releaseGap * height / pillHeight : 0;
-        const float primaryWidth = fromPill ? compact.right - compact.left : 0;
+        const float gap = liquid ? releaseGap * height / pillHeight : 0;
+        const float primaryWidth = liquid ? compact.right - compact.left : 0;
         const float width = primaryWidth + gap + bubble;
         const float top = fromPill ? pillTop : pillCenterY - height / 2;
         fullBubble = box(-width / 2 + primaryWidth + gap, top, bubble, height);

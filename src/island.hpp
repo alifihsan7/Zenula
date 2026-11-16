@@ -683,6 +683,9 @@ private:
     Clock::time_point owlBlinkStart_{};
     Clock::time_point owlHappyStart_{};    // a hop and happy eyes after a timer or Focus ends
     D2D1_POINT_2F owlLook_{};   // where the owl's pupils point, while the pointer is over it
+    D2D1_POINT_2F owlGlance_{};   // where the pointer left as the panel closed
+    Clock::time_point owlGlanceStart_{};
+    D2D1_POINT_2F lastPointer_{};
     float dotHoverFrom_ = 0;
     bool dotHot_ = false;
     bool privacyDetailsOpen_ = false;
