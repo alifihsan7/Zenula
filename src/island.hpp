@@ -159,6 +159,7 @@ public:
     IslandCommand pointerUp(POINT client);
     void pointerCancel();
     bool overControl() const;
+    bool overDial() const;   // over digits that are set by dragging up or down
 
 private:
     friend class SettingsExample;
@@ -311,7 +312,6 @@ private:
                           std::optional<bool> headphones = {});
     void drawLyrics(D2D1_RECT_F panel, Clock::time_point now, double position);
     void prepareLyricLayout(float width);
-    void drawFocusRecap(D2D1_RECT_F line);
     void drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record);
     void drawScratchpad(D2D1_RECT_F panel, bool record);
     void drawTasks(float x, float top, bool record);

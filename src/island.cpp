@@ -221,7 +221,6 @@ constexpr float taskFieldHeight = taskBarHeight + taskRowHeight * visibleTaskRow
 constexpr auto taskMotionTime = moveMotion;
 constexpr auto segmentSlideTime = moveMotion;
 constexpr auto scratchFadeTime = moveMotion;
-constexpr float focusRecapHeight = 40;   // "Today: 1h 40m focus · 4 rounds" under the idle Focus controls
 // Scratchpad, from the content top: header, then the note and its footer, or the progress row and the task list.
 constexpr float scratchBodyTop = 36;
 constexpr float scratchNoteHeight = 116;
@@ -1397,10 +1396,11 @@ float Island::screenHeight(Screen screen) const {
     case Screen::timers: {
         const bool quickIdle = !quick_.running() && !quick_.paused();
         const bool focusIdle = !focus_.running() && !focus_.paused();
-        if (quickView_) return quickIdle ? 318.0f : 242.0f;
-        if (!focusIdle) return 242 + 26;
-        // Idle Focus: templates, and with Custom the stepper row below them, then today's recap.
-        return (preferences_.rhythm == customRhythm ? 364.0f : 312.0f) + focusRecapHeight;
+        // The idle Timer is only the clock, the presets, and Start; the timeline appears once it runs.
+        if (quickView_) return quickIdle ? 220.0f : 242.0f;
+        if (!focusIdle) return 242;
+        // Idle Focus: the plan, the templates, and with Custom the stepper row below them.
+        return preferences_.rhythm == customRhythm ? 278.0f : 236.0f;
     }
     case Screen::scratch: return scratchTasks_ ? scratchTasksHeight : scratchNotesHeight;
     case Screen::drop: return dropItems_.empty() ? dropEmptyHeight :
@@ -2773,6 +2773,10 @@ void Island::pointerCancel() {
 
 bool Island::overControl() const {
     return hovered_ != Hit::none;
+}
+
+bool Island::overDial() const {
+    return hovered_ == Hit::timerDuration || pressed_ == Hit::timerDuration;
 }
 
 void Island::setDotHover(bool hot, Clock::time_point now) {
@@ -4319,15 +4323,6 @@ void Island::drawLyrics(D2D1_RECT_F panel, Clock::time_point now, double positio
 }
 
 // Today's finished Focus, centered under the Focus controls.
-void Island::drawFocusRecap(D2D1_RECT_F line) {
-    std::wstring recap = L"Today: no Focus yet";
-    if (focusTodayRounds_) {
-        recap = L"Today: " + durationText(static_cast<int>(focusTodayMinutes_)) + L" focus · " +
-                std::to_wstring(focusTodayRounds_) + (focusTodayRounds_ == 1 ? L" round" : L" rounds");
-    }
-    text(recap, timerSmallFont_.get(), line, rgb(mutedColor));
-}
-
 // Timer and Focus share one layout: a big clock, a timeline of the run, and the controls under it.
 void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
     constexpr float width = timersPanelWidth;
@@ -4407,92 +4402,106 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
             text(digits(seconds), bigClockFont_.get(), digitBox(0), rgb(inkColor));
         }
         if (record && adjustable) addTarget(area, Hit::timerDuration, unit);
-    }
-
-    // The line under the clock: what is happening, in the phase colour.
-    std::wstring phase;
-    auto phaseTone = accent_;
-    if (quickView_) {
-        phase = quick_.running() ? L"Timer · running" : quick_.paused() ? L"Timer · paused" : quick_.done() ? L"Timer · done" : L"Ready";
-    } else if (!focusBusy) {
-        phase = L"Ready · " + std::to_wstring(rounds) + (rounds == 1 ? L" round" : L" rounds");
-    } else {
-        phase = phaseName(breakPhase_) + L" · round " + std::to_wstring(focusRound_) + L" of " + std::to_wstring(rounds);
-        if (focus_.paused()) phase += L" · paused";
-        if (breakPhase_) phaseTone = breakTone;
-    }
-    text(phase, font, box(left, y + 92, width - 2 * padX, 20), phaseTone);
-
-    // The timeline: the whole run to scale, Focus blocks in the accent and Break blocks in green.
-    struct Block { float minutes; bool rest; };
-    std::vector<Block> blocks;
-    float elapsed = 0;   // minutes into the run
-    if (quickView_) {
-        blocks.push_back({quick_.duration() / 60.0f, false});
-        if (quickBusy || quick_.done()) elapsed = (quick_.duration() - quick_.seconds(now)) / 60.0f;
-    } else {
-        for (int round = 1; round <= rounds; ++round) {
-            blocks.push_back({static_cast<float>(rhythm.focusMinutes()), false});
-            blocks.push_back({static_cast<float>(round == rounds ? rhythm.longBreakMinutes() : rhythm.breakMinutes()), true});
+        if (!adjustable) continue;
+        // Up and down chevrons beside the digits: they step the value, and show that it can be changed.
+        const int duration = quick_.duration();
+        const float chevronX = unit == 0 ? area.left - 13 : area.right + 13;
+        const float middle = clockTop + 23;
+        for (size_t up = 0; up < 2; ++up) {
+            const size_t index = 2 * unit + up;
+            const bool enabled = up ? duration < timerMaxSeconds : duration > 1;
+            const auto spot = box(chevronX - 11, up ? middle - 20 : middle, 22, 20);
+            const float hot = !enabled ? 0 : pressed(Hit::quickAdjust, index) ? 1 : hoverLevel(Hit::quickAdjust, index);
+            if (hot > 0) target_->FillRoundedRectangle(rounded(spot, 7), ink(white(0.08f * hot)));
+            const auto tone = ink(mixColor(rgb(mutedColor, enabled ? 0.75f : 0.3f), rgb(inkColor), hot));
+            const float y0 = (spot.top + spot.bottom) / 2;
+            const float tip = up ? -2.5f : 2.5f;
+            target_->DrawLine(pt(chevronX - 5, y0 - tip), pt(chevronX, y0 + tip), tone, 1.6f, roundStroke_.get());
+            target_->DrawLine(pt(chevronX, y0 + tip), pt(chevronX + 5, y0 - tip), tone, 1.6f, roundStroke_.get());
+            if (record && enabled) addTarget(spot, Hit::quickAdjust, index);
         }
-        if (focusBusy) {
+    }
+
+    // The status line and the timeline only show for a run in progress; idle, both tabs are a clock,
+    // one row of choices, and Start.
+    if (busy) {
+        // The line under the clock: what is happening, in the phase colour.
+        std::wstring phase;
+        auto phaseTone = accent_;
+        if (quickView_) {
+            phase = quick_.running() ? L"Timer · running" : L"Timer · paused";
+        } else {
+            phase = phaseName(breakPhase_) + L" · round " + std::to_wstring(focusRound_) + L" of " + std::to_wstring(rounds);
+            if (focus_.paused()) phase += L" · paused";
+            if (breakPhase_) phaseTone = breakTone;
+        }
+        text(phase, font, box(left, y + 92, width - 2 * padX, 20), phaseTone);
+
+        // The timeline: the whole run to scale, Focus blocks in the accent and Break blocks in green.
+        struct Block { float minutes; bool rest; };
+        std::vector<Block> blocks;
+        float elapsed = 0;   // minutes into the run
+        if (quickView_) {
+            blocks.push_back({quick_.duration() / 60.0f, false});
+            elapsed = (quick_.duration() - quick_.seconds(now)) / 60.0f;
+        } else {
+            for (int round = 1; round <= rounds; ++round) {
+                blocks.push_back({static_cast<float>(rhythm.focusMinutes()), false});
+                blocks.push_back({static_cast<float>(round == rounds ? rhythm.longBreakMinutes() : rhythm.breakMinutes()), true});
+            }
             elapsed = static_cast<float>((focusRound_ - 1) * (rhythm.focusMinutes() + rhythm.breakMinutes()) +
                                          (breakPhase_ ? rhythm.focusMinutes() : 0)) +
                       (phaseSeconds(breakPhase_) - focus_.seconds(now)) / 60.0f;
         }
-    }
-    float total = 0;
-    for (const auto& block : blocks) total += block.minutes;
-    constexpr float gap = 3;
-    const float barTop = y + 116;
-    const float usable = (right - left) - gap * static_cast<float>(blocks.size() - 1);
-    float cursor = left;
-    float run = 0;
-    std::optional<float> marker;
-    for (const auto& block : blocks) {
-        const float w = usable * block.minutes / std::max(total, 0.001f);
-        const auto rect = box(cursor, barTop, w, 14);
-        const auto tone = block.rest ? breakTone : accent_;
-        target_->FillRoundedRectangle(rounded(rect, 4), ink(withAlpha(tone, 0.22f)));
-        const float filled = std::clamp((elapsed - run) / std::max(block.minutes, 0.001f), 0.0f, 1.0f);
-        if (filled > 0) {
-            target_->PushAxisAlignedClip(box(cursor, barTop, w * filled, 14), D2D1_ANTIALIAS_MODE_ALIASED);
-            target_->FillRoundedRectangle(rounded(rect, 4), ink(tone));
-            target_->PopAxisAlignedClip();
+        float total = 0;
+        for (const auto& block : blocks) total += block.minutes;
+        constexpr float gap = 3;
+        const float barTop = y + 116;
+        const float usable = (right - left) - gap * static_cast<float>(blocks.size() - 1);
+        float cursor = left;
+        float run = 0;
+        std::optional<float> marker;
+        for (const auto& block : blocks) {
+            const float w = usable * block.minutes / std::max(total, 0.001f);
+            const auto rect = box(cursor, barTop, w, 14);
+            const auto tone = block.rest ? breakTone : accent_;
+            target_->FillRoundedRectangle(rounded(rect, 4), ink(withAlpha(tone, 0.22f)));
+            const float filled = std::clamp((elapsed - run) / std::max(block.minutes, 0.001f), 0.0f, 1.0f);
+            if (filled > 0) {
+                target_->PushAxisAlignedClip(box(cursor, barTop, w * filled, 14), D2D1_ANTIALIAS_MODE_ALIASED);
+                target_->FillRoundedRectangle(rounded(rect, 4), ink(tone));
+                target_->PopAxisAlignedClip();
+            }
+            if (!marker && elapsed < run + block.minutes) marker = cursor + w * filled;
+            run += block.minutes;
+            cursor += w + gap;
         }
-        if (busy && !marker && elapsed < run + block.minutes) marker = cursor + w * filled;
-        run += block.minutes;
-        cursor += w + gap;
-    }
-    if (marker) target_->FillRoundedRectangle(rounded(box(*marker - 1, barTop - 5, 2, 24), 1), ink(rgb(inkColor)));
+        if (marker) target_->FillRoundedRectangle(rounded(box(*marker - 1, barTop - 5, 2, 24), 1), ink(rgb(inkColor)));
 
-    // Under the bar: where the run starts, what is quiet, and when it ends.
-    const auto started = quickView_ ? quickStarted_ : focusStarted_;
-    const auto clockText = [](std::chrono::system_clock::time_point at) {
-        const auto time = std::chrono::system_clock::to_time_t(at);
-        std::tm local{};
-        if (localtime_s(&local, &time) != 0) return std::wstring{};
-        wchar_t value[8]{};
-        swprintf_s(value, L"%02d:%02d", local.tm_hour, local.tm_min);
-        return std::wstring(value);
-    };
-    const float axisTop = y + 135;
-    const int remaining = quickView_ ? quick_.seconds(now) : (focusBusy ? sessionSecondsLeft(now) : rhythm.sessionMinutes() * 60);
-    const std::wstring startText = busy && started ? L"started " + clockText(*started) : L"now";
-    const std::wstring endText = timer.paused() ? L"paused" : L"ends " + clockAfter(remaining);
-    text(startText, timerAxisStartFont_.get(), box(left, axisTop, 140, 18), rgb(mutedColor));
-    text(endText, timerAxisEndFont_.get(), box(right - 140, axisTop, 140, 18), rgb(mutedColor));
-    if (!quickView_) {
-        const std::wstring middle = !focusBusy ? durationText(rounds * rhythm.focusMinutes()) + L" focus · " +
-                durationText(rhythm.sessionMinutes()) + L" total"
-            : !breakPhase_ && focus_.running() ? L"☾ Do Not Disturb on" : L"";
-        if (!middle.empty()) text(middle, smallFont, box(centerX - 100, axisTop, 200, 18), rgb(mutedColor));
+        // Under the bar: where the run starts, what is quiet, and when it ends.
+        const auto started = quickView_ ? quickStarted_ : focusStarted_;
+        const auto clockText = [](std::chrono::system_clock::time_point at) {
+            const auto time = std::chrono::system_clock::to_time_t(at);
+            std::tm local{};
+            if (localtime_s(&local, &time) != 0) return std::wstring{};
+            wchar_t value[8]{};
+            swprintf_s(value, L"%02d:%02d", local.tm_hour, local.tm_min);
+            return std::wstring(value);
+        };
+        const float axisTop = y + 135;
+        const int remaining = quickView_ ? quick_.seconds(now) : sessionSecondsLeft(now);
+        const std::wstring startText = started ? L"started " + clockText(*started) : L"now";
+        const std::wstring endText = timer.paused() ? L"paused" : L"ends " + clockAfter(remaining);
+        text(startText, timerAxisStartFont_.get(), box(left, axisTop, 140, 18), rgb(mutedColor));
+        text(endText, timerAxisEndFont_.get(), box(right - 140, axisTop, 140, 18), rgb(mutedColor));
+        if (!quickView_ && !breakPhase_ && focus_.running())
+            text(L"☾ Do Not Disturb on", smallFont, box(centerX - 100, axisTop, 200, 18), rgb(mutedColor));
     }
 
     if (quickView_) {
         if (!quickBusy) {
-            // Presets in one segmented track, then min and sec steppers.
-            const auto track = box(left, y + 162, right - left, 36);
+            // Presets in one segmented track. The digits and their chevrons set any other length.
+            const auto track = box(left, y + 104, right - left, 36);
             target_->FillRoundedRectangle(rounded(track, 11), ink(white(0.045f)));
             const float cell = (track.right - track.left - 6) / static_cast<float>(std::size(timerPresets));
             for (size_t i = 0; i < std::size(timerPresets); ++i) {
@@ -4500,14 +4509,7 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
                         std::to_wstring(timerPresets[i]) + L" min", Hit::timerPreset, i, true,
                         quick_.duration() == timerPresets[i] * 60, false, true);
             }
-            const int duration = quick_.duration();
-            for (size_t unit = 0; unit < 2; ++unit) {
-                const float group = centerX - 145 + 150 * static_cast<float>(unit);
-                control(box(group, y + 206, 34, 30), L"−", Hit::quickAdjust, 2 * unit, duration > 1);
-                text(unit == 0 ? L"min" : L"sec", font, box(group + 36, y + 206, 68, 30), rgb(mutedColor));
-                control(box(group + 106, y + 206, 34, 30), L"+", Hit::quickAdjust, 2 * unit + 1, duration < timerMaxSeconds);
-            }
-            control(box(centerX - 70, y + 250, 140, 34), quick_.done() ? L"Restart" : L"Start", Hit::timerToggle, 0, true, false, true);
+            control(box(centerX - 70, y + 152, 140, 34), quick_.done() ? L"Restart" : L"Start", Hit::timerToggle, 0, true, false, true);
         } else {
             control(box(centerX - 120, y + 162, 130, 34), quick_.running() ? L"Pause" : L"Resume", Hit::timerToggle, 0, true, false, true);
             control(box(centerX + 18, y + 162, 102, 34), L"Reset", Hit::timerReset, 0, true, false, false, true);
@@ -4516,22 +4518,20 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
     }
 
     if (!focusBusy) {
-        // Templates and Custom: two lines each, the lengths over the name.
-        const auto track = box(left, y + 162, right - left, 48);
-        target_->FillRoundedRectangle(rounded(track, 12), ink(white(0.045f)));
+        // The plan in one line, then the templates as focus + break minutes, and Custom.
+        text(std::to_wstring(rounds) + (rounds == 1 ? L" round · ends " : L" rounds · ends ") +
+                 clockAfter(rhythm.sessionMinutes() * 60),
+             smallFont, box(left, y + 94, right - left, 18), rgb(mutedColor));
+        const auto track = box(left, y + 120, right - left, 36);
+        target_->FillRoundedRectangle(rounded(track, 11), ink(white(0.045f)));
         const float cell = (track.right - track.left - 6) / 4.0f;
         for (size_t i = 0; i <= customRhythm; ++i) {
-            const bool chosen = rhythm.rhythm == i;
-            const auto rect = box(track.left + 3 + cell * static_cast<float>(i), track.top + 3, cell, 42);
-            const auto lengths = i == customRhythm
-                ? std::to_wstring(rhythm.customFocus) + L" + " + std::to_wstring(rhythm.customBreak)
+            const auto label = i == customRhythm ? std::wstring(L"Custom")
                 : std::to_wstring(rhythms[i].focus) + L" + " + std::to_wstring(rhythms[i].rest);
-            const auto name = i == customRhythm ? L"Custom" : rhythms[i].name;
-            control(rect, L"", Hit::focusRhythm, i, true, chosen, false, true);
-            text(lengths, font, box(rect.left, rect.top + 3, cell, 20), chosen ? accent_ : rgb(inkColor));
-            text(name, smallFont, box(rect.left, rect.top + 21, cell, 18), rgb(mutedColor));
+            control(box(track.left + 3 + cell * static_cast<float>(i), track.top + 3, cell, 30), label,
+                    Hit::focusRhythm, i, true, rhythm.rhythm == i, false, true);
         }
-        float next = 220;
+        float next = 166;
         if (rhythm.rhythm == customRhythm) {
             const std::wstring values[]{std::to_wstring(rhythm.customFocus) + L"m focus",
                                         std::to_wstring(rhythm.customBreak) + L"m break",
@@ -4549,9 +4549,7 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
             }
             next += 42;
         }
-        text(L"☾ Do Not Disturb turns on during Focus", smallFont, box(left, y + next, right - left, 18), rgb(mutedColor));
-        control(box(centerX - 70, y + next + 28, 140, 34), L"Start", Hit::focusToggle, 0, true, false, true);
-        drawFocusRecap(box(left, y + next + 72, right - left, 18));
+        control(box(centerX - 70, y + next + 2, 140, 34), L"Start", Hit::focusToggle, 0, true, false, true);
         return;
     }
 
@@ -4564,7 +4562,6 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
         control(box(centerX - 125, y + 162, 130, 34), action, Hit::focusToggle, 0, true, false, true);
         control(box(centerX + 13, y + 162, 112, 34), L"End session", Hit::focusReset, 0, true, false, false, true);
     }
-    drawFocusRecap(box(left, y + 208, right - left, 18));
 }
 
 // Seconds until the whole session ends: what is left of this phase plus every phase after it.

@@ -1280,7 +1280,7 @@ LRESULT App::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         return MA_NOACTIVATE;
     case WM_SETCURSOR:
         if (LOWORD(lparam) == HTCLIENT) {
-            SetCursor(LoadCursorW(nullptr, island_.overControl() ? IDC_HAND : IDC_ARROW));
+            SetCursor(LoadCursorW(nullptr, island_.overDial() ? IDC_SIZENS : island_.overControl() ? IDC_HAND : IDC_ARROW));
             return TRUE;
         }
         break;
@@ -1292,7 +1292,7 @@ LRESULT App::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         }
         if (island_.pointerMove({GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)})) {
             if (const auto live = island_.takeLiveCommand()) run(*live);
-            SetCursor(LoadCursorW(nullptr, island_.overControl() ? IDC_HAND : IDC_ARROW));
+            SetCursor(LoadCursorW(nullptr, island_.overDial() ? IDC_SIZENS : island_.overControl() ? IDC_HAND : IDC_ARROW));
             frame();
         }
         return 0;
