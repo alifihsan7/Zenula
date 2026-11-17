@@ -21,6 +21,12 @@ public:
         return static_cast<int>(std::chrono::ceil<std::chrono::seconds>(remaining(now)).count());
     }
 
+    // How much of the countdown has run, 0..1, without rounding to whole seconds.
+    float progress(Clock::time_point now) const {
+        if (duration_ <= Clock::duration::zero()) return 1;
+        return std::clamp(1 - std::chrono::duration<float>(remaining(now)) / std::chrono::duration<float>(duration_), 0.0f, 1.0f);
+    }
+
     void configure(int seconds) {
         duration_ = std::chrono::seconds(seconds);
         reset();

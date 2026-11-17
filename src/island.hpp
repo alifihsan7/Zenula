@@ -102,10 +102,6 @@ public:
     bool soundsQuiet() const { return alertsQuiet() || focusQuiet(); }
     // True once after Focus, Break, or a timer ends; the app plays the chime.
     bool takeFinishedCountdown();
-    // Minutes of Focus finished since the last call (each finished Focus phase adds its length); the app logs them.
-    int takeFocusLogged();
-    // Today's finished Focus, for the recap under the Focus controls.
-    void setFocusToday(unsigned minutes, unsigned rounds);
     // The saved alarm: its time of day, and when it rings if it is armed.
     void setAlarm(unsigned minutes, std::optional<std::chrono::system_clock::time_point> at);
     bool setWindowsNotificationsQuiet(std::optional<bool> quiet);
@@ -176,7 +172,7 @@ private:
     using Screen = Feature;
     Settings preferences_;
     std::vector<Screen> screens_{Screen::home, Screen::media, Screen::timers, Screen::scratch, Screen::drop, Screen::system};
-    enum class PillMode { dot, media, focus, timer, preview, privacy };
+    enum class PillMode { dot, media, focus, timer, preview, privacy, alarm };   // alarm: a set alarm, when nothing else is showing
     struct Target {
         D2D1_RECT_F rect;
         Hit hit;
@@ -227,7 +223,7 @@ private:
     void drawCountdownCheck(D2D1_POINT_2F center, D2D1_COLOR_F color, float scale = 1);
     float activityWidth(PillMode mode, Clock::time_point now) const;
     void drawActivityIndicator(Clock::time_point now, D2D1_RECT_F shape, PillMode mode, D2D1_COLOR_F color);
-    void drawActivityDot(Clock::time_point now, D2D1_RECT_F shape, PillMode mode, bool interactive);
+    void drawActivityDot(Clock::time_point now, D2D1_RECT_F shape, PillMode mode, bool interactive, float content = 1);
     void drawActivitySwap(Clock::time_point now, D2D1_RECT_F pill, D2D1_RECT_F dot);
     void drawActivityHandoff(Clock::time_point now, D2D1_RECT_F pill);
     void drawHandoffShell(D2D1_RECT_F retiring, D2D1_RECT_F incoming, float merge);
@@ -262,6 +258,10 @@ private:
     void selectFocusPhase(bool resting);
     void adjustTimer(size_t index, int steps = 1);
     void setAlarmMinutes(int minutes);
+    void changeAlarm(std::optional<std::chrono::system_clock::time_point> at, Clock::time_point now);
+    float alarmBadgeLevel(Clock::time_point now) const;
+    float alarmBadgeAmount(Clock::time_point now) const;
+    void drawAlarmGlyph(D2D1_POINT_2F center, D2D1_COLOR_F color);
     void setTimerDuration(int seconds);
     int timerDurationLimit() const;
     int phaseSeconds(bool resting) const;
@@ -557,6 +557,9 @@ private:
     };
     float tween(Tween& tween, float target, Clock::time_point now);
     Tween taskProgress_;
+    // The companion dot beside the pill: when it last budded off the pill.
+    Clock::time_point dotEnterStart_{};
+    bool dotBlocked_ = false;   // last frame showed a bubble or a swap, which place the dot themselves
     Clock::time_point scratchClearArmedUntil_{};   // Clear asks again before it empties the note
     Clock::time_point scratchModeStart_{};
     float slidePosition(SegmentSlide& slide, size_t selected, Clock::time_point now);
@@ -643,9 +646,6 @@ private:
     bool panelPinned_ = false;
     bool dotOnly_ = false;
     bool countdownFinished_ = false;
-    int focusLogged_ = 0;
-    unsigned focusTodayMinutes_ = 0;
-    unsigned focusTodayRounds_ = 0;
     ScratchpadView const* scratchpad_ = nullptr;
     std::optional<D2D1_RECT_F> scratchEditor_;
     winrt::com_ptr<IDWriteTextLayout> scratchLayout_;
@@ -724,6 +724,8 @@ private:
     bool alarmView_ = false;   // the Alarm tab is showing; quickView_ keeps the Timer or Focus choice behind it
     int alarmMinutes_ = 7 * 60;   // minutes after midnight, local time
     std::optional<std::chrono::system_clock::time_point> alarmAt_;   // set while the alarm is armed
+    float alarmBadgeFrom_ = 0;               // the alarm badge beside another activity fades from here
+    Clock::time_point alarmBadgeStart_{};
 
     // Alerts. A bubble opens (alertTo_ = 1), holds, then closes (alertTo_ = 0); while the panel is
     // open the alert shows inline instead until alertUntil_.

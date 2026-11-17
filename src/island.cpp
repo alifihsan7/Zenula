@@ -48,6 +48,7 @@ constexpr auto activitySwapTime = 440ms;
 constexpr auto activityHandoffTime = 980ms;
 constexpr auto idleBeforePausedMedia = 110ms;
 constexpr auto activityDotExitTime = moveMotion;
+constexpr auto activityDotEnterTime = 320ms;   // the companion dot buds off the pill's right end
 constexpr auto countdownCompletionMotion = moveMotion;
 constexpr auto navSelectionTime = moveMotion;
 constexpr auto hoverFadeTime = fastMotion;
@@ -1363,7 +1364,8 @@ D2D1_RECT_F Island::compactShape(Clock::time_point now, float amount) const {
 float Island::privacyBadgeWidth(Clock::time_point now) const {
     if (pillContent_ == PillMode::privacy || pillMode_ == PillMode::dot) return 0;
     const auto [screen, camera, mic] = captureAmounts(now);
-    return 14 * std::max({screen, camera, mic}) + privacyIconPitch * (screen + camera + mic);
+    const float alarm = alarmBadgeAmount(now);   // a set alarm rides in the same badge, after the capture icons
+    return 14 * std::max({screen, camera, mic, alarm}) + privacyIconPitch * (screen + camera + mic + alarm);
 }
 
 D2D1_RECT_F Island::privacyBadgeRect(Clock::time_point now, D2D1_RECT_F pill) const {
@@ -1415,12 +1417,13 @@ float Island::screenHeight(Screen screen) const {
     case Screen::timers: {
         const bool quickIdle = !quick_.running() && !quick_.paused();
         const bool focusIdle = !focus_.running() && !focus_.paused();
-        if (alarmView_) return 188.0f;   // the clock, how long until it rings, and one button
+        // Every view ends 46 below its last button, like the running Timer and Focus.
+        if (alarmView_) return 200.0f;   // the clock, how long until it rings, and one button
         // The idle Timer is only the clock, the presets, and Start; the timeline appears once it runs.
-        if (quickView_) return quickIdle ? 220.0f : 242.0f;
+        if (quickView_) return quickIdle ? 232.0f : 242.0f;
         if (!focusIdle) return 242;
         // Idle Focus: the plan, the templates, and with Custom the stepper row below them.
-        return preferences_.rhythm == customRhythm ? 278.0f : 236.0f;
+        return preferences_.rhythm == customRhythm ? 290.0f : 248.0f;
     }
     case Screen::scratch: return scratchTasks_ ? scratchTasksHeight : scratchNotesHeight;
     case Screen::drop: return dropItems_.empty() ? dropEmptyHeight :
@@ -1462,6 +1465,7 @@ bool Island::moving(Clock::time_point now) const {
     if (!animate_) return false;
     return activitySwapActive(now) || now - timerDigitsStart_ < timerDigitMotion || now - countdownCompletion_.start < countdownCompletionMotion ||
            now - dotExitStart_ < activityDotExitTime || now - dotHoverStart_ < dotHoverTime ||
+           now - dotEnterStart_ < activityDotEnterTime ||
            now - hoverStart_ < hoverFadeTime || now - shrinkStart_ < toggleTime ||
            now - dropMotionStart_ < dropMotionTime || now - dropFieldStart_ < dropMotionTime ||
            now - homeRowsStart_ < homeRowTime || now - homeClockStart_ < homeClockTime ||
@@ -1475,7 +1479,7 @@ bool Island::moving(Clock::time_point now) const {
            std::ranges::any_of(captureIndicators_, [now](auto const& item) { return now - item.start < captureTime; }) ||
            now - screenStart_ < shapeTime ||
            now - widthStart_ < shapeTime || (wantsLyrics() && now - lyricScrollStart_ < lyricScrollTime) ||
-           now - themeStart_ < themeTime || now - coverStart_ < coverTime || now - pillTransitionStart_ < pillTransitionTime_ ||
+           now - themeStart_ < themeTime || now - coverStart_ < coverTime || now - alarmBadgeStart_ < captureTime || now - pillTransitionStart_ < pillTransitionTime_ ||
            (bubbleShowing() && now - alertStart_ < splitTime);
 }
 
@@ -1615,6 +1619,8 @@ void Island::updatePill(Clock::time_point now, bool keepActivity) {
         mode = now < pausedMediaRevealAt_ ? PillMode::dot : PillMode::media;
     } else if (std::ranges::any_of(captureIndicators_, &CaptureIndicator::shown)) {
         mode = PillMode::privacy;
+    } else if (timersEnabled && alarmAt_) {
+        mode = PillMode::alarm;   // a set alarm keeps a small pill with its time while nothing else needs the pill
     }
     pillMode_ = mode;
     if (mode != PillMode::dot) {
@@ -1626,6 +1632,7 @@ void Island::updatePill(Clock::time_point now, bool keepActivity) {
         }
         else if (mode == PillMode::timer) pillTitle_ = L"Timer";
         else if (mode == PillMode::privacy) pillTitle_.clear();
+        else if (mode == PillMode::alarm) pillTitle_ = (alarmMinutes_ < 600 ? L"0" : L"") + timestamp(alarmMinutes_);   // "07:30"
         else pillTitle_ = screenLabel(screen_);
         pillPlaying_ = media_.playing;
     }
@@ -1662,6 +1669,12 @@ void Island::updatePillLayout(Clock::time_point now, float workWidth) {
     D2D1_SIZE_F target{pillWidth, pillHeight};
     if (pillMode_ == PillMode::privacy) {
         target = D2D1::SizeF(2 * privacyPadding + captureSlots, privacyHeight);
+    } else if (pillMode_ == PillMode::alarm) {
+        if (measuredTimerLabel_ != pillTitle_) {
+            measuredTimerLabel_ = pillTitle_;
+            timerLabelWidth_ = std::ceil(measure(pillTitle_, pillTitleFont_.get()));
+        }
+        target.width = 46 + timerLabelWidth_;
     } else if (pillMode_ == PillMode::focus || pillMode_ == PillMode::timer) {
         const auto& timer = pillMode_ == PillMode::timer ? quick_ : focus_;
         const bool completed = countdownCompletion_.mode == pillMode_ && now < countdownCompletion_.until;
@@ -1741,7 +1754,7 @@ void Island::updatePillLayout(Clock::time_point now, float workWidth) {
     }
     pillLyricMaxWidth_ = maxWidth;
     pillSizeFrom_ = pillSize(now);
-    if ((pillMode_ == PillMode::privacy || (pillMode_ == PillMode::media && compactPausedMediaAfterTimer_)) &&
+    if ((pillMode_ == PillMode::privacy || pillMode_ == PillMode::alarm || (pillMode_ == PillMode::media && compactPausedMediaAfterTimer_)) &&
         pillAmount(now) <= 0) pillSizeFrom_ = target;
     pillSizeTarget_ = target;
     pillLyric_ = std::move(next);
@@ -1759,7 +1772,8 @@ CoverTheme Island::featureTheme() const {
     auto shown = screen_;
     if (!open_) {
         shown = pillMode_ == PillMode::media ? Screen::media
-            : pillMode_ == PillMode::focus || pillMode_ == PillMode::timer ? Screen::timers : Screen::home;
+            : pillMode_ == PillMode::focus || pillMode_ == PillMode::timer || pillMode_ == PillMode::alarm ? Screen::timers
+            : Screen::home;
     }
     CoverTheme theme{};
     switch (shown) {
@@ -1871,6 +1885,9 @@ void Island::openFromCompact(Clock::time_point now) {
                    (pillMode_ == PillMode::focus && focus_.running())) {
             quickView_ = pillMode_ == PillMode::timer;
             alarmView_ = false;
+            showScreen(Screen::timers, now);
+        } else if (pillMode_ == PillMode::alarm) {
+            alarmView_ = true;
             showScreen(Screen::timers, now);
         } else {
             showScreen(Screen::home, now);
@@ -1995,7 +2012,6 @@ void Island::skipBreak(Clock::time_point now) {
 // the long break after the last round ends it.
 void Island::finishFocus(Clock::time_point now, bool fromCompanion) {
     const bool rested = breakPhase_;
-    if (!rested) focusLogged_ += phaseSeconds(false) / 60;
     const bool sessionDone = rested && lastRound();
     std::wstring title = rested ? L"Break done" : L"Focus done";
     std::wstring next;
@@ -2062,13 +2078,6 @@ void Island::adjustRhythm(size_t index) {
 
 bool Island::takeFinishedCountdown() {
     return std::exchange(countdownFinished_, false);
-}
-
-int Island::takeFocusLogged() { return std::exchange(focusLogged_, 0); }
-
-void Island::setFocusToday(unsigned minutes, unsigned rounds) {
-    focusTodayMinutes_ = minutes;
-    focusTodayRounds_ = rounds;
 }
 
 void Island::completeCountdown(Clock::time_point now, PillMode mode, IslandAlert alert) {
@@ -2140,7 +2149,28 @@ void Island::setAlarmMinutes(int minutes) {
 
 void Island::setAlarm(unsigned minutes, std::optional<std::chrono::system_clock::time_point> at) {
     alarmMinutes_ = static_cast<int>(std::min(minutes, 1439u));
+    changeAlarm(at, Clock::now());
+}
+
+// Arms or clears the alarm. Its badge on the pill fades in or out from wherever it is.
+void Island::changeAlarm(std::optional<std::chrono::system_clock::time_point> at, Clock::time_point now) {
+    if (at.has_value() != alarmAt_.has_value()) {
+        alarmBadgeFrom_ = alarmBadgeLevel(now);
+        alarmBadgeStart_ = animate_ ? now : Clock::time_point{};
+    }
     alarmAt_ = at;
+    updatePill(now);
+}
+
+float Island::alarmBadgeLevel(Clock::time_point now) const {
+    const float amount = animate_ ? easeInOut(progress(alarmBadgeStart_, captureTime, now)) : 1.0f;
+    return std::lerp(alarmBadgeFrom_, alarmAt_ ? 1.0f : 0.0f, amount);
+}
+
+// How much of the alarm badge shows beside another activity. The alarm's own pill needs no badge.
+float Island::alarmBadgeAmount(Clock::time_point now) const {
+    if (pillContent_ == PillMode::alarm || !preferences_.enabled(Screen::timers)) return 0;
+    return alarmBadgeLevel(now);
 }
 
 void Island::tick() {
@@ -2254,6 +2284,14 @@ bool Island::wantsAudioSpectrum() const {
 unsigned Island::frameInterval() const {
     const auto now = Clock::now();
     const bool timerRunning = focus_.running() || quick_.running();
+    // A countdown redraws once a second. Beside the pill it is a ring, which needs a frame for every quarter
+    // pixel of arc to look like it flows: only a countdown under about four minutes asks for more than 1 Hz.
+    unsigned tick = 1000;
+    if (const auto companion = activityCompanion();
+        animate_ && (companion == PillMode::timer || companion == PillMode::focus)) {
+        const auto& countdown = companion == PillMode::timer ? quick_ : focus_;
+        tick = static_cast<unsigned>(std::clamp(countdown.duration() * 1000LL / 214, 33LL, 1000LL));
+    }
     if (animate_ && now - visibilityStart_ < visibilityTime) return 10;
     if (suppressed_) return timerRunning ? 1000 : 0;
     if (moving(now) || openAt_ || closeAt_ || dragging_ || timerRepeatAt_ != Clock::time_point{}) return 10;
@@ -2276,14 +2314,14 @@ unsigned Island::frameInterval() const {
     if (pillMode_ == PillMode::preview) return 50;
     if (wantsLyricPill()) return 50;
     if (pillMode_ == PillMode::media) {
-        if (media_.playing) return animate_ && preferences_.showWaveform ? 33 : timerRunning ? 1000 : 0;
+        if (media_.playing) return animate_ && preferences_.showWaveform ? 33 : timerRunning ? tick : 0;
         if (pillTitleVisible_ && pausedAt_ != Clock::time_point{} && preferences_.compactPause != 3) {
             const auto compactAt = pausedAt_ + std::chrono::seconds(preferences_.pauseSeconds());
             const auto remaining = std::max(1ms, std::chrono::ceil<std::chrono::milliseconds>(compactAt - now));
-            return static_cast<unsigned>((timerRunning ? std::min(remaining, 1000ms) : remaining).count());
+            return static_cast<unsigned>((timerRunning ? std::min(remaining, std::chrono::milliseconds(tick)) : remaining).count());
         }
     }
-    return timerRunning ? 1000 : 0;
+    return timerRunning ? tick : 0;
 }
 
 bool Island::wantsPrayerClock() const {
@@ -2768,8 +2806,7 @@ IslandCommand Island::pointerUp(POINT client) {
         break;
     case Hit::alarmToggle:
         // Set or cancel. The island shows it at once; the app keeps the timer and saves it.
-        if (alarmAt_) alarmAt_.reset();
-        else alarmAt_ = nextAlarm(alarmMinutes_);
+        changeAlarm(alarmAt_ ? std::nullopt : std::optional(nextAlarm(alarmMinutes_)), now);
         command.kind = IslandCommand::Kind::setAlarm;
         command.index = static_cast<size_t>(alarmMinutes_);
         command.seconds = alarmAt_ ? static_cast<double>(std::chrono::system_clock::to_time_t(*alarmAt_)) : 0;
@@ -3372,9 +3409,13 @@ float Island::companionSlotOpacity(Clock::time_point now) const {
 
 void Island::drawPrivacyBadge(Clock::time_point now, D2D1_RECT_F badge) {
     const auto amounts = captureAmounts(now);
-    const float presence = *std::ranges::max_element(amounts);
+    const float alarm = alarmBadgeAmount(now);
+    const float capture = *std::ranges::max_element(amounts);
+    const float presence = std::max(capture, alarm);
     if (presence <= 0.01f) return;
-    target_->FillRoundedRectangle(rounded(badge, 9), ink(rgb(0x6cdda0, 0.10f * presence)));
+    // Green while something is being captured; the accent when the badge only holds the alarm.
+    target_->FillRoundedRectangle(rounded(badge, 9),
+        ink(capture > 0.01f ? rgb(0x6cdda0, 0.10f * presence) : withAlpha(accent_, 0.12f * presence)));
     constexpr float iconSize = 14;
     const float middle = (badge.top + badge.bottom) / 2;
     float x = badge.left + 7 * presence;
@@ -3387,6 +3428,20 @@ void Island::drawPrivacyBadge(Clock::time_point now, D2D1_RECT_F badge) {
                           rgb(indicator.color, opacity), iconSize);
         }
         x += slot;
+    }
+    if (const float opacity = lin(0.5f, 1, alarm); opacity > 0)
+        drawAlarmGlyph(pt(x + privacyIconPitch * alarm / 2, middle + 0.5f), withAlpha(accent_, opacity));
+}
+
+// A small alarm clock: a face with two hands and a bell on each shoulder.
+void Island::drawAlarmGlyph(D2D1_POINT_2F center, D2D1_COLOR_F color) {
+    const auto tone = ink(color);
+    target_->DrawEllipse(D2D1::Ellipse(center, 5.2f, 5.2f), tone, 1.4f);
+    target_->DrawLine(center, pt(center.x, center.y - 3), tone, 1.3f, roundStroke_.get());
+    target_->DrawLine(center, pt(center.x + 2.3f, center.y + 1), tone, 1.3f, roundStroke_.get());
+    for (const float side : {-1.0f, 1.0f}) {
+        target_->DrawLine(pt(center.x + side * 6.4f, center.y - 4.6f), pt(center.x + side * 4, center.y - 7), tone, 1.4f,
+                          roundStroke_.get());
     }
 }
 
@@ -3440,6 +3495,13 @@ void Island::drawPillContent(Clock::time_point now, float width, bool hideTitle)
     if (pillContent_ == PillMode::preview) {
         drawScreenGlyph(screen_, box(pillLeft + 8, pillTop, 26, pillHeight), accent_);
         text(pillTitle_, pillTitleFont_.get(), box(pillLeft + 39, pillTop, right - (pillLeft + 39), pillHeight),
+             rgb(inkColor));
+        return;
+    }
+    if (pillContent_ == PillMode::alarm) {
+        // A small alarm clock, then the time it rings.
+        drawAlarmGlyph(pt(left + 19, pillCenterY + 0.5f), accent_);
+        text(pillTitle_, pillTitleFont_.get(), box(left + 34, pillTop, std::max(0.0f, right - (left + 34)), pillHeight),
              rgb(inkColor));
         return;
     }
@@ -3527,10 +3589,9 @@ void Island::drawCountdownCheck(D2D1_POINT_2F center, D2D1_COLOR_F color, float 
     target_->DrawGeometry(check.finish().get(), ink(color), 1.9f, roundStroke_.get());
 }
 
-float Island::activityWidth(PillMode mode, Clock::time_point now) const {
-    if (mode != PillMode::focus && mode != PillMode::timer) return activityDotSize;
-    const auto& timer = mode == PillMode::timer ? quick_ : focus_;
-    return std::ceil(timerDigitWidth_ * static_cast<float>(countdownTime(timer.seconds(now)).size())) + 18;
+// Every companion is a circle: a progress ring for a countdown, the spectrum or a note for music.
+float Island::activityWidth(PillMode, Clock::time_point) const {
+    return activityDotSize;
 }
 
 void Island::drawActivityIndicator(Clock::time_point now, D2D1_RECT_F shape, PillMode mode, D2D1_COLOR_F color) {
@@ -3540,24 +3601,59 @@ void Island::drawActivityIndicator(Clock::time_point now, D2D1_RECT_F shape, Pil
     } else if (mode == PillMode::media) {
         drawScreenGlyph(Screen::media, shape, color);
     } else if (mode == PillMode::focus || mode == PillMode::timer) {
+        // A ring that fills as the countdown runs: the accent, green during a Break, muted while paused.
+        constexpr float radius = 8.5f;
+        constexpr float stroke = 2.4f;
+        if (std::min(shape.right - shape.left, shape.bottom - shape.top) < 2 * radius + stroke + 2) return;
         const auto& countdown = mode == PillMode::timer ? quick_ : focus_;
-        const auto clock = countdownTime(countdown.seconds(now));
-        const float width = std::ceil(timerDigitWidth_ * static_cast<float>(clock.size()));
-        if (shape.right - shape.left >= width + 4) {
-            text(clock, timerFont_.get(), box(center.x - width / 2, shape.top, width, shape.bottom - shape.top),
-                 countdown.paused() ? rgb(mutedColor) : color);
+        const auto tone = countdown.paused() ? rgb(mutedColor, color.a)
+            : mode == PillMode::focus && breakPhase_ ? rgb(breakColor, color.a) : withAlpha(accent_, color.a);
+        const float done = countdown.progress(now);   // unrounded, so the ring flows instead of stepping each second
+        target_->DrawEllipse(D2D1::Ellipse(center, radius, radius), ink(white(0.16f * color.a)), stroke);
+        if (done >= 0.999f) {
+            target_->DrawEllipse(D2D1::Ellipse(center, radius, radius), ink(tone), stroke);
+        } else if (done > 0.002f) {
+            const float angle = 2 * pi * done;   // clockwise from the top
+            PathBuilder path(graphics_.get());
+            path.move(pt(center.x, center.y - radius), false)
+                .arc(pt(center.x + radius * std::sin(angle), center.y - radius * std::cos(angle)), radius, done > 0.5f, true);
+            target_->DrawGeometry(path.finish().get(), ink(tone), stroke, roundStroke_.get());
+        }
+        // Inside the ring, what is counting: pause bars, an hourglass for the Timer, a bullseye for Focus,
+        // and an open circle for a Break.
+        if (countdown.paused()) {
+            target_->FillRectangle(box(center.x - 2.8f, center.y - 3, 1.8f, 6), ink(tone));
+            target_->FillRectangle(box(center.x + 1, center.y - 3, 1.8f, 6), ink(tone));
+        } else if (mode == PillMode::timer) {
+            constexpr float w = 2.6f, h = 3.2f;
+            for (const float side : {-1.0f, 1.0f}) {
+                target_->DrawLine(pt(center.x - w, center.y + side * h), pt(center.x + w, center.y + side * h), ink(tone), 1.2f,
+                                  roundStroke_.get());
+                target_->DrawLine(pt(center.x + side * w, center.y - h), pt(center.x - side * w, center.y + h), ink(tone), 1.2f,
+                                  roundStroke_.get());
+            }
+        } else if (breakPhase_) {
+            target_->DrawEllipse(D2D1::Ellipse(center, 2.6f, 2.6f), ink(tone), 1.3f);
+        } else {
+            target_->FillEllipse(D2D1::Ellipse(center, 3, 3), ink(tone));
         }
     }
 }
 
-void Island::drawActivityDot(Clock::time_point now, D2D1_RECT_F shape, PillMode mode, bool interactive) {
+// content: how much of the indicator shows, for a dot that is still growing into place.
+void Island::drawActivityDot(Clock::time_point now, D2D1_RECT_F shape, PillMode mode, bool interactive, float content) {
+    const float hover = interactive ? dotHover(now) : 0;
+    const auto hit = grow(shape, 2, 2);
+    shape = grow(shape, 1.5f * hover, 1.5f * hover);   // it swells a little under the pointer
     const auto shell = rounded(shape, (shape.bottom - shape.top) / 2);
     fillShell(shell);
-    const float hover = interactive ? dotHover(now) : 0;
     if (hover > 0) target_->FillRoundedRectangle(shell, ink(white(0.14f * hover)));
-    drawActivityIndicator(now, shape, mode, rgb(inkColor));
+    if (content > 0) {
+        if (content < 1) pushLayer(nullptr, content);
+        drawActivityIndicator(now, shape, mode, rgb(inkColor));
+        if (content < 1) popLayer();
+    }
     if (interactive) {
-        const auto hit = grow(shape, 2, 2);
         target_->FillRectangle(hit, ink(white(1.0f / 255)));
         addTarget(hit, Hit::activityDot, static_cast<size_t>(mode));
     }
@@ -6326,6 +6422,9 @@ void Island::draw(HWND window) {
                           activityWidth(companion, now), activityDotSize);
         bounds = unite(bounds, grow(*activityDot, 3, 3));
     }
+    // A dot that appears beside a settled pill buds off it. One left behind by a bubble or a swap is already in place.
+    if (animate_ && activityDot && !lastActivityDot_ && !dotBlocked_) dotEnterStart_ = now;
+    dotBlocked_ = splitVisible || swapping;
     lastActivityDot_ = activityDot;
     const bool drawSwap = !panelVisible && !splitVisible && swapping && !handoff && activityDot;
     const auto swapEnd = activityDot.value_or(activitySwap_.dot);
@@ -6401,8 +6500,17 @@ void Island::draw(HWND window) {
     if (interactiveBadge) addTarget(grow(badge, 1, 2), Hit::privacyBadge);
     if (showPrivacyDetails) drawPrivacyDetails(details);
     if (activityDot && !drawSwap) {
+        auto shape = *activityDot;
+        float content = 1;
+        if (const float enter = animate_ ? progress(dotEnterStart_, activityDotEnterTime, now) : 1; enter < 1) {
+            // It starts as a bead inside the pill's right end, then slides out and grows to its size.
+            const float middle = (shape.top + shape.bottom) / 2;
+            const auto bead = box(compact.right - dotSize - 4, middle - dotSize / 2, dotSize, dotSize);
+            shape = mixRect(bead, shape, easeOut(enter));
+            content = easeInOut(lin(0.5f, 1, enter));
+        }
         if (slotOpacity < 1) pushLayer(nullptr, slotOpacity);
-        drawActivityDot(now, *activityDot, companion, !splitVisible);
+        drawActivityDot(now, shape, companion, !splitVisible, content);
         if (slotOpacity < 1) popLayer();
     }
     if (dotExiting) {
