@@ -164,6 +164,9 @@ constexpr float privacyHeight = 30;
 constexpr float privacyPadding = 6;
 constexpr float privacyGap = 8;
 constexpr auto themeTime = 700ms;
+constexpr auto coverTime = moveMotion;
+constexpr auto coverHoldTime = 1000ms;     // how long the old cover may stand in for a missing new one
+constexpr auto skipBackMemory = 3000ms;    // a cover that changes this soon after Previous slides the other way
 constexpr auto splitTime = 1152ms;
 constexpr float splitRate = 5.0f / 6.0f;
 constexpr auto bubbleHoldTime = 1200ms;
@@ -721,10 +724,16 @@ void Island::setMedia(MediaState const& media) {
         widthFrom_ = panelWidthAt(now);
         widthStart_ = screenStart_;
     }
+    // A track's text usually arrives before its cover. The old cover stays up meanwhile, so the new one
+    // pushes it out in a single move instead of flashing the placeholder in between.
+    const bool sameSource = media.hasSession && media_.hasSession && media.appId == media_.appId &&
+        media.sourceId == media_.sourceId;
     if (media.cover != coverSource_) {
         coverSource_ = media.cover;
-        cover_ = {};
-        if (coverSource_) cover_ = {coverSource_->size, coverSource_->size, coverSource_->pixels, nullptr};
+        if (!coverSource_ && sameSource && animate_ && !cover_.pixels.empty()) coverHeldAt_ = now;
+        else showCover(now, sameSource);
+    } else if (coverHeldAt_ != Clock::time_point{} && (!sameSource || now - coverHeldAt_ >= coverHoldTime)) {
+        showCover(now, sameSource);
     }
     if (media.playing && retiringDotMode_ == PillMode::media) dotExitStart_ = {};
     if (media_.playing && !media.playing) retirePausedActivity(PillMode::media, now);
@@ -739,6 +748,19 @@ void Island::setMedia(MediaState const& media) {
         mediaIntroPending_ = open_ || panelValue(now) > 0;
         if (!mediaIntroPending_) notify({IslandAlert::Kind::mediaStarted, title()});
     }
+}
+
+void Island::showCover(Clock::time_point now, bool slide) {
+    coverHeldAt_ = {};
+    coverFrom_ = {};
+    coverStart_ = {};
+    if (slide && animate_) {
+        coverFrom_ = std::move(cover_);
+        coverStart_ = now;
+        coverDirection_ = now - skippedBackAt_ < skipBackMemory ? -1.0f : 1.0f;
+    }
+    cover_ = {};
+    if (coverSource_) cover_ = {coverSource_->size, coverSource_->size, coverSource_->pixels, nullptr};
 }
 
 void Island::setPower(PowerState const& power) {
@@ -1433,7 +1455,7 @@ bool Island::moving(Clock::time_point now) const {
            std::ranges::any_of(captureIndicators_, [now](auto const& item) { return now - item.start < captureTime; }) ||
            now - screenStart_ < shapeTime ||
            now - widthStart_ < shapeTime || (wantsLyrics() && now - lyricScrollStart_ < lyricScrollTime) ||
-           now - themeStart_ < themeTime || now - pillTransitionStart_ < pillTransitionTime_ ||
+           now - themeStart_ < themeTime || now - coverStart_ < coverTime || now - pillTransitionStart_ < pillTransitionTime_ ||
            (bubbleShowing() && now - alertStart_ < splitTime);
 }
 
@@ -1750,6 +1772,8 @@ void Island::updateTheme(Clock::time_point now) {
     const float t = fade();
     accent_ = mixColor(accentFrom_, rgb(theme_.accent), t);
     tint_ = mixColor(tintFrom_, rgb(theme_.tint), t);
+    coverSlide_ = animate_ ? easeOut(progress(coverStart_, coverTime, now)) : 1;
+    if (coverSlide_ >= 1 && (!coverFrom_.pixels.empty() || coverFrom_.bitmap)) coverFrom_ = {};
 }
 
 float Island::visibility(Clock::time_point now) const {
@@ -2569,7 +2593,10 @@ IslandCommand Island::pointerUp(POINT client) {
     switch (hit) {
     case Hit::activityDot: swapActivities(now); break;
     case Hit::privacyBadge: privacyDetailsOpen_ = !privacyDetailsOpen_; break;
-    case Hit::previous: command.kind = IslandCommand::Kind::previous; break;
+    case Hit::previous:
+        command.kind = IslandCommand::Kind::previous;
+        skippedBackAt_ = now;
+        break;
     case Hit::toggle: command.kind = IslandCommand::Kind::toggle; break;
     case Hit::next: command.kind = IslandCommand::Kind::next; break;
     case Hit::cover: command.kind = IslandCommand::Kind::openSource; break;
@@ -2901,6 +2928,7 @@ void Island::releaseDeviceResources() {
     target_ = nullptr;
     for (auto& layer : layers_) layer = nullptr;
     cover_.bitmap = nullptr;
+    coverFrom_.bitmap = nullptr;
     dropBitmaps_.clear();
     for (auto& [id, image] : icons_) image.bitmap = nullptr;
 }
@@ -3158,18 +3186,40 @@ void Island::drawArt(D2D1_RECT_F rect, float opacity) {
     if (opacity <= 0) return;
     const float size = rect.right - rect.left;
     const float radius = std::lerp(size / 2, std::min(8.0f, size * 0.24f), lin(8, 16, size));
-    if (auto* image = bitmap(cover_)) {
+    if (coverSlide_ >= 1) {
+        drawArtFace(cover_, rect, radius, 0, opacity);
+        return;
+    }
+    // The frame stays put; the old cover leaves through one side while the new one follows it in. Each is
+    // clipped to its side of the seam, so the two never overlap and the rounded corners hold.
+    const float moved = size * coverSlide_;
+    const bool fromRight = coverDirection_ > 0;
+    const float seam = fromRight ? rect.right - moved : rect.left + moved;
+    const auto side = [&](bool left) {
+        return D2D1::RectF(left ? rect.left - 1 : seam, rect.top - 1, left ? seam : rect.right + 1, rect.bottom + 1);
+    };
+    target_->PushAxisAlignedClip(side(fromRight), D2D1_ANTIALIAS_MODE_ALIASED);
+    drawArtFace(coverFrom_, rect, radius, -coverDirection_ * moved, opacity);
+    target_->PopAxisAlignedClip();
+    target_->PushAxisAlignedClip(side(!fromRight), D2D1_ANTIALIAS_MODE_ALIASED);
+    drawArtFace(cover_, rect, radius, coverDirection_ * (size - moved), opacity);
+    target_->PopAxisAlignedClip();
+}
+
+void Island::drawArtFace(Image& image, D2D1_RECT_F rect, float radius, float shift, float opacity) {
+    const float size = rect.right - rect.left;
+    if (auto* source = bitmap(image)) {
         winrt::com_ptr<ID2D1BitmapBrush> fill;
-        winrt::check_hresult(target_->CreateBitmapBrush(image, fill.put()));
+        winrt::check_hresult(target_->CreateBitmapBrush(source, fill.put()));
         fill->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         fill->SetOpacity(opacity);
-        fill->SetTransform(D2D1::Matrix3x2F::Scale(size / cover_.width, (rect.bottom - rect.top) / cover_.height) *
-                           D2D1::Matrix3x2F::Translation(rect.left, rect.top));
+        fill->SetTransform(D2D1::Matrix3x2F::Scale(size / image.width, (rect.bottom - rect.top) / image.height) *
+                           D2D1::Matrix3x2F::Translation(rect.left + shift, rect.top));
         target_->FillRoundedRectangle(rounded(rect, radius), fill.get());
         return;
     }
     target_->FillRoundedRectangle(rounded(rect, radius), ink(white(0.08f * opacity)));
-    const auto center = pt((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+    const auto center = pt((rect.left + rect.right) / 2 + shift, (rect.top + rect.bottom) / 2);
     const float unit = std::min(1.25f, size / 16);
     const auto color = ink(rgb(mutedColor, opacity));
     target_->FillEllipse(D2D1::Ellipse(pt(center.x - 2 * unit, center.y + 3 * unit), 2.2f * unit, 1.6f * unit), color);

@@ -343,6 +343,8 @@ private:
     void drawSharedTitle(D2D1_RECT_F compact, D2D1_RECT_F panel, float value);
     D2D1_RECT_F pillArtRect(D2D1_RECT_F pill) const;
     void drawArt(D2D1_RECT_F rect, float opacity);
+    void drawArtFace(Image& image, D2D1_RECT_F rect, float radius, float shift, float opacity);
+    void showCover(Clock::time_point now, bool slide);
     void drawFocusGlyph(D2D1_POINT_2F center, float size, D2D1_COLOR_F color);
     void drawTimerGlyph(D2D1_POINT_2F center, D2D1_COLOR_F color);
     void drawChipGlyph(D2D1_POINT_2F center, D2D1_COLOR_F color);
@@ -790,6 +792,13 @@ private:
 
     std::shared_ptr<const Cover> coverSource_;
     Image cover_;
+    // A new cover pushes the old one out sideways. coverFrom_ is the outgoing one (no pixels: the placeholder).
+    Image coverFrom_;
+    Clock::time_point coverStart_{};
+    float coverSlide_ = 1;               // 0..1, eased; 1 when nothing is sliding
+    float coverDirection_ = 1;           // 1: the new cover comes in from the right; -1: from the left
+    Clock::time_point coverHeldAt_{};    // set while the old cover stands in for one that has not arrived yet
+    Clock::time_point skippedBackAt_{};  // the last press on Previous
     std::map<std::wstring, Image> icons_;
 };
 
