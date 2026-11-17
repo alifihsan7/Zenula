@@ -38,11 +38,11 @@ struct IslandCommand {
                       selectAudioOutput, soundSettings, notificationSettings, removeDrop, clearDrop, openDropImage, appVolume, appMute,
                       focusRhythm, prayerLocation, openSettings, overlapMode,
                       addTask, toggleTask, removeTask, clearDoneTasks,
-                      setBrightness, openPrayerSearch, copyScratchpad, clearScratchpad };
+                      setBrightness, openPrayerSearch, copyScratchpad, clearScratchpad, setAlarm };
     Kind kind = Kind::none;
-    double seconds = 0;              // seek position; appVolume: level 0..1; appMute: 1 = on
+    double seconds = 0;              // seek position; appVolume: level 0..1; appMute: 1 = on; setAlarm: Unix time it rings, 0 = cancelled
     std::wstring appId;
-    size_t index = 0;                // focusRhythm: the rhythm (3 = Custom)
+    size_t index = 0;                // focusRhythm: the rhythm (3 = Custom); setAlarm: minutes after midnight
     unsigned focusMinutes = 0;       // focusRhythm: Custom lengths and rounds
     unsigned breakMinutes = 0;
     unsigned rounds = 0;
@@ -106,6 +106,8 @@ public:
     int takeFocusLogged();
     // Today's finished Focus, for the recap under the Focus controls.
     void setFocusToday(unsigned minutes, unsigned rounds);
+    // The saved alarm: its time of day, and when it rings if it is armed.
+    void setAlarm(unsigned minutes, std::optional<std::chrono::system_clock::time_point> at);
     bool setWindowsNotificationsQuiet(std::optional<bool> quiet);
     void setSuppressed(bool suppressed);
     bool setDotOnly(bool on);
@@ -165,7 +167,7 @@ private:
     friend class SettingsExample;
     enum class Hit { none, pill, activityDot, privacyBadge, previous, toggle, next, timeline, cover, sourcePicker, sourceMenu, source, navMedia, navTimers,
                      navScratch, navSystem, navPrayer, focusToggle, focusReset, timerView, focusAdjust, timerPreset,
-                     timerToggle, timerReset, quickAdjust, timerDuration, lyrics, lyricLine, retryLyrics, lyricsDelay, scratchEdit,
+                     timerToggle, timerReset, alarmToggle, quickAdjust, timerDuration, lyrics, lyricLine, retryLyrics, lyricsDelay, scratchEdit,
                      navDrop, dropItem, removeDrop, clearDrop, dropImage, panelPin, audioPicker, notificationSettings,
                      appVolume, appMute, focusRhythm, focusSkip, prayerLocationPicker,
                      audioOutputMenu, audioOutputChoice, soundSettings, navHome, homeSettings, homeStartTimer, homeOverlapMode,
@@ -259,6 +261,7 @@ private:
     void selectTimerView(size_t index);
     void selectFocusPhase(bool resting);
     void adjustTimer(size_t index, int steps = 1);
+    void setAlarmMinutes(int minutes);
     void setTimerDuration(int seconds);
     int timerDurationLimit() const;
     int phaseSeconds(bool resting) const;
@@ -717,6 +720,10 @@ private:
     int focusRound_ = 1;     // 1..preferences_.focusRounds() in the current session
     Countdown focus_{25 * 60};
     Countdown quick_{60};
+    // The Alarm tab: a clock time that rings once. The app keeps the wall-clock timer and saves it.
+    bool alarmView_ = false;   // the Alarm tab is showing; quickView_ keeps the Timer or Focus choice behind it
+    int alarmMinutes_ = 7 * 60;   // minutes after midnight, local time
+    std::optional<std::chrono::system_clock::time_point> alarmAt_;   // set while the alarm is armed
 
     // Alerts. A bubble opens (alertTo_ = 1), holds, then closes (alertTo_ = 0); while the panel is
     // open the alert shows inline instead until alertUntil_.

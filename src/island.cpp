@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 #include <cwchar>
 #include <iterator>
 #include <numeric>
@@ -315,6 +316,24 @@ float bezier(float x1, float y1, float x2, float y2, float x) {
         t = (low + high) / 2;
     }
     return sample(y1, y2, t);
+}
+
+// The next time the local clock shows this many minutes after midnight.
+std::chrono::system_clock::time_point nextAlarm(int minutes) {
+    const auto now = std::time(nullptr);
+    std::tm local{};
+    if (localtime_s(&local, &now) != 0) return std::chrono::system_clock::now();
+    local.tm_hour = minutes / 60;
+    local.tm_min = minutes % 60;
+    local.tm_sec = 0;
+    local.tm_isdst = -1;
+    auto at = std::mktime(&local);
+    if (at <= now) {
+        ++local.tm_mday;
+        local.tm_isdst = -1;
+        at = std::mktime(&local);
+    }
+    return std::chrono::system_clock::from_time_t(at);
 }
 
 float progress(Island::Clock::time_point start, Island::Clock::duration length, Island::Clock::time_point now) {
@@ -1396,6 +1415,7 @@ float Island::screenHeight(Screen screen) const {
     case Screen::timers: {
         const bool quickIdle = !quick_.running() && !quick_.paused();
         const bool focusIdle = !focus_.running() && !focus_.paused();
+        if (alarmView_) return 188.0f;   // the clock, how long until it rings, and one button
         // The idle Timer is only the clock, the presets, and Start; the timeline appears once it runs.
         if (quickView_) return quickIdle ? 220.0f : 242.0f;
         if (!focusIdle) return 242;
@@ -1519,7 +1539,10 @@ void Island::retirePausedActivity(PillMode mode, Clock::time_point now) {
     const auto start = open_ ? now + shapeTime : now;
     activitySwap_ = {start, companion, mode, pill, dot, pillTitle_, true, false};
     if (open_ && !panelPinned_) setOpen(false, now);
-    if (companion != PillMode::media) quickView_ = companion == PillMode::timer;
+    if (companion != PillMode::media) {
+        quickView_ = companion == PillMode::timer;
+        alarmView_ = false;
+    }
     openAt_.reset();
     previousPillLyric_ = {};
     pillLyric_ = {};
@@ -1542,7 +1565,10 @@ void Island::swapActivities(Clock::time_point now) {
     const auto compact = compactShape(now, pillAmount(now));
     activitySwap_ = {animate_ ? now : Clock::time_point{}, incoming, pillMode_, compact,
                      grow(dot->rect, -2, -2), std::move(label)};
-    if (incoming != PillMode::media) quickView_ = incoming == PillMode::timer;
+    if (incoming != PillMode::media) {
+        quickView_ = incoming == PillMode::timer;
+        alarmView_ = false;
+    }
     showScreen(incoming == PillMode::media ? Screen::media : Screen::timers, now);
     preferredPill_ = incoming;
     countdownCompletion_ = {};
@@ -1739,7 +1765,7 @@ CoverTheme Island::featureTheme() const {
     switch (shown) {
     case Screen::media: if (cover) theme = media_.theme; break;
     case Screen::timers: {
-        const bool resting = breakPhase_ && (focus_.running() || focus_.paused()) && (open_ ? !quickView_ : pillMode_ == PillMode::focus);
+        const bool resting = breakPhase_ && (focus_.running() || focus_.paused()) && (open_ ? !quickView_ && !alarmView_ : pillMode_ == PillMode::focus);
         theme.accent = resting ? breakColor : 0x8fd0ff;
         break;
     }
@@ -1844,6 +1870,7 @@ void Island::openFromCompact(Clock::time_point now) {
         } else if ((pillMode_ == PillMode::timer && quick_.running()) ||
                    (pillMode_ == PillMode::focus && focus_.running())) {
             quickView_ = pillMode_ == PillMode::timer;
+            alarmView_ = false;
             showScreen(Screen::timers, now);
         } else {
             showScreen(Screen::home, now);
@@ -2060,8 +2087,11 @@ void Island::completeCountdown(Clock::time_point now, PillMode mode, IslandAlert
 }
 
 void Island::selectTimerView(size_t index) {
-    const bool quick = index == 0;   // 0 Timer, 1 Focus
-    if (quick != quickView_) resizeTimers(Clock::now());
+    const bool alarm = index == 2;   // 0 Timer, 1 Focus, 2 Alarm
+    const bool quick = alarm ? quickView_ : index == 0;
+    if (quick != quickView_ || alarm != alarmView_) resizeTimers(Clock::now());
+    alarmView_ = alarm;
+    if (alarm) return;   // the pill keeps following the Timer or Focus chosen before
     quickView_ = quick;
     preferredPill_ = quick ? PillMode::timer : PillMode::focus;
 }
@@ -2089,11 +2119,28 @@ void Island::setTimerDuration(int seconds) {
     timer.configure(seconds);
 }
 
+// The left digits step by 60 and the right by 1: minutes and seconds for the Timer, hours and minutes for the Alarm.
 void Island::adjustTimer(size_t index, int steps) {
-    const auto& timer = quick_;
     const int step = index < 2 ? 60 : 1;
-    const int delta = index % 2 == 0 ? -step : step;
-    setTimerDuration(timer.duration() + delta * steps);
+    const int delta = (index % 2 == 0 ? -step : step) * steps;
+    if (alarmView_) setAlarmMinutes(alarmMinutes_ + delta);
+    else setTimerDuration(quick_.duration() + delta);
+}
+
+// The alarm's time of day wraps around midnight. An armed alarm is cancelled before it is changed.
+void Island::setAlarmMinutes(int minutes) {
+    if (alarmAt_) return;
+    minutes = (minutes % 1440 + 1440) % 1440;
+    if (minutes == alarmMinutes_) return;
+    timerDigitsFrom_ = alarmMinutes_;
+    timerDigitsTo_ = minutes;
+    timerDigitsStart_ = Clock::now();
+    alarmMinutes_ = minutes;
+}
+
+void Island::setAlarm(unsigned minutes, std::optional<std::chrono::system_clock::time_point> at) {
+    alarmMinutes_ = static_cast<int>(std::min(minutes, 1439u));
+    alarmAt_ = at;
 }
 
 void Island::tick() {
@@ -2221,7 +2268,8 @@ unsigned Island::frameInterval() const {
     if (panelPinned() && !alert_) {
         if (screen_ == Screen::media && (media_.playing || (wantsLyrics() && now < lyricFollowAt_) ||
             (animate_ && preferences_.showWaveform && now - pausedAt_ < 350ms))) return 50;
-        return screen_ == Screen::system || scratchEditing_ || timerRunning ? 1000 : 0;
+        const bool alarmShown = screen_ == Screen::timers && alarmView_;   // "in 7h 25m" counts down
+        return screen_ == Screen::system || scratchEditing_ || timerRunning || alarmShown ? 1000 : 0;
     }
     if (open_ || alert_) return 50;
     if (dotOnly_ && pillMode_ != PillMode::preview) return timerRunning ? 1000 : 0;
@@ -2636,7 +2684,10 @@ IslandCommand Island::pointerUp(POINT client) {
         break;
     case Hit::navMedia: showScreen(Screen::media, now); break;
     case Hit::navTimers:
-        if (screen_ == Screen::home && index == 1) quickView_ = homeTimer() == PillMode::timer;
+        if (screen_ == Screen::home && index == 1) {
+            quickView_ = homeTimer() == PillMode::timer;
+            alarmView_ = false;
+        }
         showScreen(Screen::timers, now);
         break;
     case Hit::navScratch:
@@ -2714,6 +2765,14 @@ IslandCommand Island::pointerUp(POINT client) {
         else preferredPill_ = PillMode::timer;
         if (!quick_.running() && !quick_.paused()) quickStarted_ = std::chrono::system_clock::now();
         quick_.toggle(now);
+        break;
+    case Hit::alarmToggle:
+        // Set or cancel. The island shows it at once; the app keeps the timer and saves it.
+        if (alarmAt_) alarmAt_.reset();
+        else alarmAt_ = nextAlarm(alarmMinutes_);
+        command.kind = IslandCommand::Kind::setAlarm;
+        command.index = static_cast<size_t>(alarmMinutes_);
+        command.seconds = alarmAt_ ? static_cast<double>(std::chrono::system_clock::to_time_t(*alarmAt_)) : 0;
         break;
     case Hit::timerReset:
         resizeTimers(now);
@@ -4333,7 +4392,7 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
     const float centerX = x + width / 2;
     const bool focusBusy = focus_.running() || focus_.paused();
     const bool quickBusy = quick_.running() || quick_.paused();
-    const bool busy = quickView_ ? quickBusy : focusBusy;
+    const bool busy = !alarmView_ && (quickView_ ? quickBusy : focusBusy);
     const int rounds = preferences_.focusRounds();
     const auto& rhythm = preferences_;
     auto* font = timerTextFont_.get();
@@ -4362,22 +4421,25 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
         if (record && enabled) addTarget(rect, hit, index);
     };
 
-    // Title on the left, Timer | Focus on the right.
-    text(L"Timers", titleFont_.get(), box(left, y + padTop, 120, 22.4f), rgb(inkColor));
-    constexpr wchar_t const* labels[]{L"Timer", L"Focus"};
-    const auto tabs = box(right - 176, y + 8, 176, 34);
+    // Title on the left, Timer | Focus | Alarm on the right.
+    text(L"Timers", titleFont_.get(), box(left, y + padTop, 90, 22.4f), rgb(inkColor));
+    constexpr wchar_t const* labels[]{L"Timer", L"Focus", L"Alarm"};
+    constexpr float tab = 78;
+    const size_t view = alarmView_ ? 2 : quickView_ ? 0 : 1;
+    const auto tabs = box(right - (3 * tab + 6), y + 8, 3 * tab + 6, 34);
     target_->FillRoundedRectangle(rounded(tabs, 11), ink(white(0.045f)));
-    const float slide = slidePosition(timerSlide_, quickView_ ? 0 : 1, now);
-    target_->FillRoundedRectangle(rounded(box(tabs.left + 3 + 85 * slide, tabs.top + 3, 85, 28), 8), ink(withAlpha(accent_, 0.18f)));
+    const float slide = slidePosition(timerSlide_, view, now);
+    target_->FillRoundedRectangle(rounded(box(tabs.left + 3 + tab * slide, tabs.top + 3, tab, 28), 8), ink(withAlpha(accent_, 0.18f)));
     for (size_t i = 0; i < std::size(labels); ++i) {
-        control(box(tabs.left + 3 + 85 * static_cast<float>(i), tabs.top + 3, 85, 28), labels[i], Hit::timerView, i,
-                true, i == (quickView_ ? 0u : 1u), false, true, true);
+        control(box(tabs.left + 3 + tab * static_cast<float>(i), tabs.top + 3, tab, 28), labels[i], Hit::timerView, i,
+                true, i == view, false, true, true);
     }
 
-    // The big clock. Only the idle Quick Timer's digits can be dragged or scrolled.
+    // The big clock: minutes and seconds left, or the Alarm's hours and minutes. The idle Quick Timer's
+    // digits and an alarm that is not set can be dragged or scrolled.
     const auto& timer = quickView_ ? quick_ : focus_;
-    const bool adjustable = quickView_ && !quickBusy;
-    const int seconds = timer.seconds(now);
+    const bool adjustable = alarmView_ ? !alarmAt_ : quickView_ && !quickBusy;
+    const int seconds = alarmView_ ? alarmMinutes_ : timer.seconds(now);
     const float roll = adjustable && animate_ && timerDigitsTo_ == seconds
         ? easeInOut(progress(timerDigitsStart_, timerDigitMotion, now)) : 1;
     const float direction = timerDigitsTo_ > timerDigitsFrom_ ? 1.0f : -1.0f;
@@ -4409,7 +4471,7 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
         const float middle = clockTop + 23;
         for (size_t up = 0; up < 2; ++up) {
             const size_t index = 2 * unit + up;
-            const bool enabled = up ? duration < timerMaxSeconds : duration > 1;
+            const bool enabled = alarmView_ || (up ? duration < timerMaxSeconds : duration > 1);
             const auto spot = box(chevronX - 11, up ? middle - 20 : middle, 22, 20);
             const float hot = !enabled ? 0 : pressed(Hit::quickAdjust, index) ? 1 : hoverLevel(Hit::quickAdjust, index);
             if (hot > 0) target_->FillRoundedRectangle(rounded(spot, 7), ink(white(0.08f * hot)));
@@ -4422,7 +4484,19 @@ void Island::drawTimers(D2D1_RECT_F panel, Clock::time_point now, bool record) {
         }
     }
 
-    // The status line and the timeline only show for a run in progress; idle, both tabs are a clock,
+    if (alarmView_) {
+        // How long until it rings, then Set alarm or Cancel.
+        const auto at = alarmAt_ ? *alarmAt_ : nextAlarm(alarmMinutes_);
+        const auto minutesLeft = std::chrono::ceil<std::chrono::minutes>(at - std::chrono::system_clock::now()).count();
+        const std::wstring until = minutesLeft <= 1 ? L"under a minute" : durationText(static_cast<int>(minutesLeft));
+        text((alarmAt_ ? L"Rings in " : L"in ") + until, alarmAt_ ? font : smallFont, box(left, y + 94, right - left, 18),
+             alarmAt_ ? accent_ : rgb(mutedColor));
+        if (alarmAt_) control(box(centerX - 70, y + 120, 140, 34), L"Cancel", Hit::alarmToggle);
+        else control(box(centerX - 70, y + 120, 140, 34), L"Set alarm", Hit::alarmToggle, 0, true, false, true);
+        return;
+    }
+
+    // The status line and the timeline only show for a run in progress; idle, the tabs are a clock,
     // one row of choices, and Start.
     if (busy) {
         // The line under the clock: what is happening, in the phase colour.

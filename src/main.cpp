@@ -37,7 +37,8 @@ constexpr UINT_PTR frameTimer = 2;
 constexpr UINT_PTR fullscreenTimer = 3;
 constexpr UINT_PTR clipboardTimer = 5;
 constexpr UINT_PTR networkTimer = 6;
-static_assert(clipboardTimer != MediaMonitor::artworkTimer);
+constexpr UINT_PTR alarmTimer = 7;
+static_assert(clipboardTimer != MediaMonitor::artworkTimer && alarmTimer != MediaMonitor::artworkTimer);
 constexpr UINT clipboardRetryInterval = 40;
 constexpr unsigned clipboardRetryLimit = 25;
 
@@ -76,6 +77,7 @@ private:
     static LRESULT CALLBACK taskEditInput(HWND edit, UINT message, WPARAM wparam, LPARAM lparam,
                                           UINT_PTR id, DWORD_PTR context);
     void refreshPower();
+    void armAlarm();
     void queueNetworkRefresh();
     void startNetworkRefresh();
     winrt::Windows::Foundation::IAsyncAction refreshNetwork();
@@ -193,6 +195,9 @@ int App::run(HINSTANCE instance, std::optional<SettingsTest> test, Feature featu
     island_.setPower(power_);
     island_.setSystem(system_.sample(false));
     island_.setPreferences(settings_);
+    island_.setAlarm(settings_.alarmMinutes, settings_.alarmAt
+        ? std::optional(std::chrono::system_clock::from_time_t(static_cast<std::time_t>(settings_.alarmAt))) : std::nullopt);
+    armAlarm();
     dropZone_.setEnabled(settings_.enabled(Feature::drop));
     powerNotification_ = RegisterPowerSettingNotification(window_, &GUID_ACDC_POWER_SOURCE,
                                                            DEVICE_NOTIFY_WINDOW_HANDLE);
@@ -383,6 +388,27 @@ void App::logFocus(int minutes) {
     std::filesystem::create_directories(focusFile_.parent_path(), error);
     std::wofstream output(focusFile_, std::ios::trunc);
     output << focusDay_ << L' ' << focusMinutes_ << L' ' << focusRounds_ << L'\n';
+}
+
+// Waits for the armed alarm, then rings it. The timer wakes at least every ten minutes to look at the wall
+// clock again, so sleep, a clock change, or daylight saving cannot move the ring; an alarm whose time passed
+// while the PC slept or was off rings as soon as Zenula sees it.
+void App::armAlarm() {
+    KillTimer(window_, alarmTimer);
+    if (!settings_.alarmAt) return;
+    const auto left = static_cast<long long>(settings_.alarmAt) - static_cast<long long>(std::time(nullptr));
+    if (left > 0) {
+        SetTimer(window_, alarmTimer, static_cast<UINT>(std::min(left, 600LL) * 1000), nullptr);
+        return;
+    }
+    wchar_t time[8]{};
+    swprintf_s(time, L"%02u:%02u", settings_.alarmMinutes / 60, settings_.alarmMinutes % 60);
+    settings_.alarmAt = 0;
+    settings_.saveAlarm();
+    island_.setAlarm(settings_.alarmMinutes, std::nullopt);
+    island_.notify({IslandAlert::Kind::timerDone, L"Alarm", time, std::nullopt, 3});
+    if (settings_.timerSound) playChime(IDW_TIMER_SOUND);
+    PostMessageW(window_, redrawMessage, 0, 0);
 }
 
 void App::scheduleFrames(UINT interval) {
@@ -578,6 +604,12 @@ void App::run(IslandCommand const& command) {
         break;
     }
     case IslandCommand::Kind::openSettings: launchSettings(); break;
+    case IslandCommand::Kind::setAlarm:
+        settings_.alarmMinutes = static_cast<unsigned>(command.index);
+        settings_.alarmAt = static_cast<unsigned>(command.seconds);
+        settings_.saveAlarm();
+        armAlarm();
+        break;
     case IslandCommand::Kind::previous: control(MediaCommand::previous); break;
     case IslandCommand::Kind::toggle: control(MediaCommand::toggle); break;
     case IslandCommand::Kind::next: control(MediaCommand::next); break;
@@ -1179,9 +1211,15 @@ LRESULT App::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         maintainZOrder();
         return 0;
     case WM_POWERBROADCAST:
-        if (wparam == PBT_APMRESUMEAUTOMATIC) queueNetworkRefresh();
+        if (wparam == PBT_APMRESUMEAUTOMATIC) {
+            queueNetworkRefresh();
+            armAlarm();
+        }
         refreshPower();
         return TRUE;
+    case WM_TIMECHANGE:
+        armAlarm();
+        return 0;
     case networkChangedMessage:
         queueNetworkRefresh();
         return 0;
@@ -1201,6 +1239,7 @@ LRESULT App::handle(UINT message, WPARAM wparam, LPARAM lparam) {
             if (changed || prayerChanged) frame();
         }
         if (wparam == frameTimer) frame();
+        if (wparam == alarmTimer) armAlarm();
         if (wparam == clipboardTimer) refreshClipboard();
         if (wparam == fullscreenTimer) {
             const bool changed = refreshFullscreen();

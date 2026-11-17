@@ -45,6 +45,8 @@ constexpr DWORD hideMicrophoneBit = 2;
 constexpr wchar_t timerValue[] = L"TimerOptions";
 constexpr DWORD timerMutedBit = 2;      // bit 0 was the old Auto cycle; sessions always cycle now
 constexpr DWORD sessionSavedBit = 1u << 22;  // the rhythm bits below are in use
+constexpr wchar_t alarmTimeValue[] = L"AlarmTime";
+constexpr wchar_t alarmAtValue[] = L"AlarmAt";
 constexpr wchar_t displayValue[] = L"DisplayOptions";
 constexpr DWORD hideInFullscreenBit = 2;
 constexpr DWORD dotOnlyBit = 8;   // bit 4 was Auto-shrink, which Dot only replaced
@@ -104,6 +106,8 @@ Settings Settings::load() {
             }
         }
     }
+    if (const auto value = read(alarmTimeValue); value && *value < 24 * 60) settings.alarmMinutes = *value;
+    if (const auto value = read(alarmAtValue)) settings.alarmAt = *value;
     if (const auto value = read(displayValue)) {
         settings.hideInFullscreen = (*value & hideInFullscreenBit) != 0;
         settings.dotOnly = (*value & dotOnlyBit) != 0;
@@ -168,6 +172,11 @@ bool Settings::savePrivacy() const {
 bool Settings::saveTimer() const {
     return write(timerValue, (timerSound ? 0 : timerMutedBit) | sessionSavedBit | (rhythm << 2) | (customRounds << 4) |
                              (customFocus << 8) | (customBreak << 16));
+}
+
+bool Settings::saveAlarm() const {
+    const bool time = write(alarmTimeValue, alarmMinutes);
+    return write(alarmAtValue, alarmAt) && time;
 }
 
 bool Settings::saveDisplay() const {

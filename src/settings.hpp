@@ -76,6 +76,9 @@ struct Settings {
     unsigned customFocus = 40;      // minutes, 5..180
     unsigned customBreak = 8;       // minutes, 1..60
     unsigned customRounds = 4;      // 1..8
+    // The Alarm tab: a time of day, and when it rings while it is set.
+    unsigned alarmMinutes = 7 * 60; // minutes after midnight, local time
+    unsigned alarmAt = 0;           // Unix time the alarm rings; 0 when it is not set
     std::array<Feature, featureOrder.size()> features = featureOrder;
     unsigned enabledFeatures = featureMask;
 
@@ -99,6 +102,7 @@ struct Settings {
     bool saveClipboard() const;
     bool savePrivacy() const;
     bool saveTimer() const;
+    bool saveAlarm() const;
     bool saveDisplay() const;
     bool saveIsland() const;
     bool saveFeatures() const;
